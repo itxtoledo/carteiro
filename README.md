@@ -126,9 +126,7 @@ stays **off** until the token is configured.
 | `CARTEIRO_API_LISTEN` | `127.0.0.1:9090` | admin API address (off without a token) |
 | `CARTEIRO_API_TOKEN` | — | single bearer token (enables the admin API) |
 | `CARTEIRO_ACCOUNTS` | — | seed accounts `email:password` separated by `;` |
-| `CARTEIRO_DKIM_DOMAIN` / `SELECTOR` | —/`mail` | seed DKIM for one domain |
-| `CARTEIRO_DKIM_KEY` / `KEY_FILE` | — | seed DKIM key: inline PEM (or `\n`, or base64) / file path |
-| `CARTEIRO_DKIM_KEYS` | — | several DKIM seeds at once: `doma.com:mail:keyA;domb.com:selB:keyB` (`;` separated) |
+| `CARTEIRO_DKIM_KEYS` | — | DKIM seeds: `doma.com:mail:<b64>;domb.com:selB:<b64>` (`;` separated, each key is the base64 of the whole PEM file) |
 | `CARTEIRO_MAX_MESSAGE_SIZE` | `26214400` (25 MiB) | per-message size limit in bytes |
 | `CARTEIRO_MAX_RECIPIENTS` | `100` | recipients per message |
 | `CARTEIRO_DELIVERY_MAX_ATTEMPTS` | `10` | delivery attempts before dead-letter |
@@ -186,7 +184,7 @@ Private keys (DKIM) and TLS certificates/keys are configured **only as
 base64**, never as filesystem paths. Base64 is just an encoding — it is not
 encryption — but it keeps each secret on a single manageable line and avoids
 mounting/reading files, which is why every config surface (YAML `key_data`,
-`CARTEIRO_DKIM_KEY/KEYS`, `CARTEIRO_TLS_CERT/KEY`) accepts it.
+`CARTEIRO_DKIM_KEYS`, `CARTEIRO_TLS_CERT/KEY`) accepts it.
 
 ### Generate and encode a DKIM key
 
@@ -199,9 +197,10 @@ KEY=$(base64 -w0 dkim.yourdomain.com.key)     # Linux
 # macOS (wraps lines; also accepted, or use -b 0):
 # KEY=$(base64 -i dkim.yourdomain.com.key | tr -d '\n')
 
-# 3) put it in the config seed or env:
+# 3) put it in the config seed or env (base64 of the whole PEM, one line):
 #    YAML: dkim: [{domain, selector, key_data: "$KEY"}]
-#    env:  CARTEIRO_DKIM_KEY="$KEY"   (or inside CARTEIRO_DKIM_KEYS)
+#    env:  CARTEIRO_DKIM_KEYS="yourdomain.com:mail:$KEY"
+#         (several domains: "doma.com:mail:$KEY_A;domb.com:mail:$KEY_B")
 
 # 4) publish the PUBLIC part in DNS (never in the config):
 openssl rsa -in dkim.yourdomain.com.key -pubout -out dkim.pub
@@ -363,10 +362,9 @@ override it, e.g. to probe the API instead:
 ### Passing DKIM keys when running in Docker
 
 DKIM seeds are declared the same way as accounts, via environment variables.
-Use the **base64 of the private key file** (one clean line; `PEM` inline also
-works in env vars, and the API accepts PEM). Remember: the **private** key
-goes here, the **public** key goes to the DNS record
-(`<selector>._domainkey.<domain>`).
+Use the **base64 of the private key file** (one clean line; the API also
+accepts PEM directly). Remember: the **private** key goes here, the
+**public** key goes to the DNS record (`<selector>._domainkey.<domain>`).
 
 ```bash
 KEY=$(base64 -w0 dkim.yourdomain.com.key)   # base64 of the PRIVATE key
@@ -374,9 +372,7 @@ KEY=$(base64 -w0 dkim.yourdomain.com.key)   # base64 of the PRIVATE key
 docker run -d --name carteiro \
   -p 587:587 \
   -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:a-strong-password' \
-  -e CARTEIRO_DKIM_DOMAIN='yourdomain.com' \
-  -e CARTEIRO_DKIM_SELECTOR='mail' \
-  -e "CARTEIRO_DKIM_KEY=$KEY" \
+  -e "CARTEIRO_DKIM_KEYS=yourdomain.com:mail:$KEY" \
   -v carteiro-data:/var/lib/carteiro \
   ghcr.io/itxtoledo/carteiro:latest
 ```
@@ -637,11 +633,11 @@ dkim:
 ```
 
 Per project, generate + publish its own key and add its SPF record — all
-domains include the same outbound IP (section 9 below). The environment DKIM
-variables configure a **single** domain; for several domains use the YAML
-`dkim` list or the admin API. For hard isolation (separate database, own
-limits), run one container/daemon per project with its own
-`CARTEIRO_SQLITE_PATH` volume.
+domains include the same outbound IP (section 9 below). The environment
+variable `CARTEIRO_DKIM_KEYS` covers several domains too; for anything
+beyond that use the YAML `dkim` list or the admin API. For hard isolation
+(separate database, own limits), run one container/daemon per project with
+its own `CARTEIRO_SQLITE_PATH` volume.
 
 ---
 

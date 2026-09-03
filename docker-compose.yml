@@ -22,15 +22,11 @@ services:
     environment:
       # Seed account (upserted on startup, logged clearly):
       CARTEIRO_ACCOUNTS: "sender@yourdomain.com:AVERYSTRONGPASSWORD"
-      # Seed DKIM (optional). Single domain:
-      # CARTEIRO_DKIM_DOMAIN: "yourdomain.com"
-      # CARTEIRO_DKIM_SELECTOR: "mail"
-      # CARTEIRO_DKIM_KEY: |
-      #   -----BEGIN RSA PRIVATE KEY-----
-      #   ...base64 lines...
-      #   -----END RSA PRIVATE KEY-----
-      # Or several domains at once (file paths or base64 PEM, ';' separated):
-      # CARTEIRO_DKIM_KEYS: "doma.com:mail:/etc/carteiro/doma.key;domb.com:mail:/etc/carteiro/domb.key"
+      # Seed DKIM (optional): one variable, base64 of each PEM key, ';' separated.
+      # Single domain:
+      # CARTEIRO_DKIM_KEYS: "yourdomain.com:mail:PASTE-BASE64-OF-KEY-FILE"
+      # Several domains:
+      # CARTEIRO_DKIM_KEYS: "doma.com:mail:QUJDREVGR0hJSktMTU5PUFE=;domb.com:mail:UkVGR0hJSktMTU5PUFFSU1Q="
       # Admin API bearer token, singular (never stored in the DB):
       CARTEIRO_API_TOKEN: "CHANGE-ME-a-long-random-token"
       # CARTEIRO_API_LISTEN: ":9090"

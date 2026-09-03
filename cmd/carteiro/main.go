@@ -156,8 +156,8 @@ func resolveDBPath(cfg *config.Config) (string, error) {
 }
 
 // seed upserts the accounts and DKIM keys declared in the YAML/env config,
-// logging exactly what happened for every entry. File-based DKIM keys are
-// read and stored as PEM text in the database.
+// logging exactly what happened for every entry. DKIM keys are always PEM
+// text (already decoded from base64 by the config loader).
 func seed(logger *slog.Logger, cfg *config.Config, store *storage.Store) error {
 	if len(cfg.Accounts) > 0 {
 		seeds := make([]storage.AccountSeed, 0, len(cfg.Accounts))
@@ -176,18 +176,10 @@ func seed(logger *slog.Logger, cfg *config.Config, store *storage.Store) error {
 	if len(cfg.DKIM) > 0 {
 		keys := make([]storage.DKIMKey, 0, len(cfg.DKIM))
 		for _, k := range cfg.DKIM {
-			data := k.KeyData
-			if data == "" {
-				raw, err := os.ReadFile(k.KeyFile)
-				if err != nil {
-					return fmt.Errorf("seeding dkim for %s: reading %s: %w", k.Domain, k.KeyFile, err)
-				}
-				data = string(raw)
-			}
-			if _, err := dkim.ParseSigner([]byte(data)); err != nil {
+			if _, err := dkim.ParseSigner([]byte(k.KeyData)); err != nil {
 				return fmt.Errorf("seeding dkim for %s: %w", k.Domain, err)
 			}
-			keys = append(keys, storage.DKIMKey{Domain: k.Domain, Selector: k.Selector, KeyData: data})
+			keys = append(keys, storage.DKIMKey{Domain: k.Domain, Selector: k.Selector, KeyData: k.KeyData})
 		}
 		sum, err := store.UpsertDKIM(keys)
 		if err != nil {

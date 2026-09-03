@@ -116,8 +116,8 @@ accounts:
 #   - domain: "yourdomain.com"
 #     selector: "mail"
 #     key_data: "PASTE-THE-BASE64-HERE"
-# Environment alternative (env keys may also use file paths):
-# single domain: CARTEIRO_DKIM_DOMAIN/SELECTOR + CARTEIRO_DKIM_KEY (base64)
-# several:       CARTEIRO_DKIM_KEYS = "doma.com:mail:<b64>;domb.com:sel:<b64>"
+# Environment alternative (same base64 format, one variable for any number of
+# domains, entries separated by ';'):
+# CARTEIRO_DKIM_KEYS = "doma.com:mail:<b64>;domb.com:sel:<b64>"
 # The PEM is decoded and stored in the database (upserted on every boot).
 # Publish each public key at: <selector>._domainkey.<domain>  (see README).

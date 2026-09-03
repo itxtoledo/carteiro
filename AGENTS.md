@@ -16,8 +16,8 @@ all live in a database, managed over the air through an admin REST API.
   server access can change everything anyway.
 - **No file-based secrets for configuration**: DKIM keys and TLS
   certificates are configured **only as base64** (YAML or env). Filesystem
-  paths are hard to administer and were removed for TLS; DKIM env vars still
-  accept file paths as a convenience but base64 is the documented way.
+  paths were removed everywhere (TLS files, then DKIM env/file paths) in
+  favour of base64: one variable per secret, no mounted files to read.
 - **Over the air (OTA) management**: accounts and DKIM domains are added via
   the admin API while the server runs; seeds are only for first boot.
 - **Answers in Portuguese, artifacts English**, rich Markdown when verbose.
@@ -70,10 +70,11 @@ Key rules (validated in `config.normalizeAndValidate`):
 - Storage: `storage.type: sqlite|mysql`; sqlite file defaults to the OS data
   dir (`/var/lib/carteiro/carteiro.db` as root/systemd); mysql needs a DSN.
 - **Accounts are optional seeds**, created/updated on every boot (see Seeds).
-- **DKIM (YAML)**: `key_data` is base64 of the PEM, decoded at load; env:
-  `CARTEIRO_DKIM_DOMAIN`+`SELECTOR`+`KEY`(base64/PEM/`KEY_FILE` path), or
-  `CARTEIRO_DKIM_KEYS` = `"doma.com:mail:keyA;domb.com:sel:keyB"` for several
-  domains. Env overrides YAML for the same domain.
+- **DKIM (YAML)**: `key_data` is base64 of the PEM, decoded at load; env has
+  a single variable, `CARTEIRO_DKIM_KEYS` =
+  `"doma.com:mail:<b64>;domb.com:sel:<b64>"` (base64 of each whole PEM; no
+  singular DKIM env vars, no file paths). Env overrides YAML for the same
+  domain.
 - **TLS is base64-only**: `tls.cert_data`/`key_data` in YAML,
   `CARTEIRO_TLS_CERT`/`CARTEIRO_TLS_KEY` in env. No `cert_file`/`key_file`
   anywhere; leftover file env vars are ignored. Pair is validated with

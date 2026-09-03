@@ -153,16 +153,14 @@ type Account struct {
 	AllowedFrom []string `yaml:"allowed_from"`
 }
 
-// DKIMKey is a seed DKIM key. In YAML the private key is provided ONLY as
-// key_data with the base64 encoding of the PEM file (single line); it is
-// decoded at load time into KeyData (PEM text). KeyFile is internal, used by
-// the environment variables (CARTEIRO_DKIM_KEY_FILE / file entries of
-// CARTEIRO_DKIM_KEYS).
+// DKIMKey is a seed DKIM key. The private key is provided ONLY as the base64
+// encoding of the whole PEM file (a single line): in YAML through key_data,
+// in the environment through CARTEIRO_DKIM_KEYS. The base64 is decoded at
+// load time into KeyData (PEM text).
 type DKIMKey struct {
 	Domain   string `yaml:"domain"`
 	Selector string `yaml:"selector"`
 	KeyData  string `yaml:"key_data"`
-	KeyFile  string `yaml:"-"`
 }
 
 // Config is the effective configuration (defaults and validation applied).
@@ -443,23 +441,14 @@ func applyEnv(c *Config) error {
 	return nil
 }
 
-// applyDKIMEnv builds DKIM key seeds from environment variables.
+// applyDKIMEnv builds DKIM key seeds from the CARTEIRO_DKIM_KEYS environment
+// variable. It is the ONLY environment surface for DKIM keys: one variable
+// listing several domains, entries separated by ';':
 //
-// A single domain can be set with:
+//	CARTEIRO_DKIM_KEYS = "doma.com:mail:<b64-a>;domb.com:selector-b:<b64-b>"
 //
-//	CARTEIRO_DKIM_DOMAIN     domain to sign for (required)
-//	CARTEIRO_DKIM_SELECTOR   selector (default "mail")
-//	CARTEIRO_DKIM_KEY        inline PEM private key (or base64-encoded PEM)
-//	CARTEIRO_DKIM_KEY_FILE   path to the private key file
-//
-// Several domains (for example when the relay serves two domains) can be set
-// in one list variable, entries separated by ';':
-//
-//	CARTEIRO_DKIM_KEYS = "doma.com:mail:<key-a>;domb.com:selector-b:<key-b>"
-//
-// where <key> is a private key file path, inline PEM (real line breaks or
-// the two-character sequence backslash-n) or base64-encoded PEM. Env entries
-// override the YAML dkim: entries with the same domain.
+// where <b64> is the base64 of the whole PEM private key file (a single
+// line). Env entries override the YAML dkim: entries with the same domain.
 func applyDKIMEnv(c *Config) error {
 	if v := os.Getenv("CARTEIRO_DKIM_KEYS"); v != "" {
 		for _, entry := range strings.Split(v, ";") {
@@ -469,108 +458,37 @@ func applyDKIMEnv(c *Config) error {
 			}
 			parts := strings.SplitN(entry, ":", 3)
 			if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" {
-				return fmt.Errorf("CARTEIRO_DKIM_KEYS: entry %q must be domain:selector:key", entry)
+				return fmt.Errorf("CARTEIRO_DKIM_KEYS: entry %q must be domain:selector:base64", entry)
 			}
 			domain := strings.TrimSpace(parts[0])
 			selector := strings.TrimSpace(parts[1])
 			if selector == "" {
 				selector = "mail"
 			}
-			key, err := classifyDKIMKey(parts[2])
+			key, err := decodeBase64Key(parts[2])
 			if err != nil {
 				return fmt.Errorf("CARTEIRO_DKIM_KEYS: entry %q: %w", entry, err)
 			}
-			c.dkimEnv = append(c.dkimEnv, DKIMKey{Domain: domain, Selector: selector, KeyFile: key.file, KeyData: key.data})
+			c.dkimEnv = append(c.dkimEnv, DKIMKey{Domain: domain, Selector: selector, KeyData: key})
 		}
 	}
-
-	// The singular variables describe one more entry (they take precedence
-	// when the same domain appears in the list).
-	domain := strings.TrimSpace(os.Getenv("CARTEIRO_DKIM_DOMAIN"))
-	selector := strings.TrimSpace(os.Getenv("CARTEIRO_DKIM_SELECTOR"))
-	key := os.Getenv("CARTEIRO_DKIM_KEY")
-	keyFile := strings.TrimSpace(os.Getenv("CARTEIRO_DKIM_KEY_FILE"))
-
-	triggered := domain != "" || selector != "" || key != "" || keyFile != ""
-	if !triggered {
-		return nil
-	}
-	if domain == "" {
-		return fmt.Errorf("CARTEIRO_DKIM_DOMAIN is required when DKIM is configured via environment")
-	}
-	if key != "" && keyFile != "" {
-		return fmt.Errorf("set either CARTEIRO_DKIM_KEY or CARTEIRO_DKIM_KEY_FILE, not both")
-	}
-	if selector == "" {
-		selector = "mail"
-	}
-	entry := DKIMKey{Domain: domain, Selector: selector, KeyFile: keyFile}
-	if key != "" {
-		data, err := normalizeInlineKey(key)
-		if err != nil {
-			return err
-		}
-		entry.KeyData = data
-	}
-	// Remove a list entry for the same domain, then add the singular one.
-	kept := c.dkimEnv[:0]
-	for _, e := range c.dkimEnv {
-		if e.Domain != domain {
-			kept = append(kept, e)
-		}
-	}
-	c.dkimEnv = append(kept, entry)
 	return nil
 }
 
-type dkimKeyMaterial struct {
-	file string
-	data string
-}
-
-// classifyDKIMKey decides whether a CARTEIRO_DKIM_KEYS value is a file path,
-// inline PEM or base64-encoded PEM.
-func classifyDKIMKey(v string) (dkimKeyMaterial, error) {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return dkimKeyMaterial{}, fmt.Errorf("empty key material")
-	}
-	if strings.Contains(v, "-----BEGIN") {
-		data, err := normalizeInlineKey(v)
-		return dkimKeyMaterial{data: data}, err
-	}
-	// Try base64 (the compact single-line form used in env files).
-	decoded, err := base64.StdEncoding.DecodeString(v)
-	if err == nil && strings.Contains(string(decoded), "-----BEGIN") {
-		return dkimKeyMaterial{data: string(decoded)}, nil
-	}
-	// Otherwise treat it as a file path.
-	if strings.ContainsAny(v, "/~") {
-		return dkimKeyMaterial{file: v}, nil
-	}
-	return dkimKeyMaterial{}, fmt.Errorf("key is neither PEM, nor base64 PEM, nor a file path")
-}
-
-// normalizeInlineKey accepts a PEM private key either as-is (with real or
-// escaped "\n" line breaks) or base64-encoded, and returns the PEM text.
-func normalizeInlineKey(v string) (string, error) {
-	withNL := strings.ReplaceAll(v, `\n`, "\n")
-	trimmed := strings.TrimSpace(withNL)
-	if strings.Contains(trimmed, "-----BEGIN") {
-		return trimmed + "\n", nil
-	}
+// decodeBase64Key decodes the base64 of a PEM private key back into PEM text.
+func decodeBase64Key(v string) (string, error) {
 	compact := strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
 			return -1
 		}
 		return r
-	}, withNL)
+	}, v)
 	decoded, err := base64.StdEncoding.DecodeString(compact)
 	if err != nil {
-		return "", fmt.Errorf("CARTEIRO_DKIM_KEY: value is neither PEM nor valid base64: %w", err)
+		return "", fmt.Errorf("key must be base64 of the PEM private key: %v", err)
 	}
 	if !strings.Contains(string(decoded), "-----BEGIN") {
-		return "", fmt.Errorf("CARTEIRO_DKIM_KEY: decoded value is not a PEM private key")
+		return "", fmt.Errorf("key decodes to something that is not a PEM private key")
 	}
 	return string(decoded), nil
 }
@@ -671,14 +589,12 @@ func (c *Config) normalizeAndValidate() error {
 		if k.Domain == "" || k.Selector == "" {
 			return fmt.Errorf("dkim: domain and selector are required")
 		}
-		if (k.KeyFile == "") == (k.KeyData == "") {
-			return fmt.Errorf("dkim for %s: provide the key either as key_data in YAML (base64) or via CARTEIRO_DKIM_KEY/KEY_FILE", k.Domain)
+		if k.KeyData == "" {
+			return fmt.Errorf("dkim for %s: provide the key as key_data (base64 of the PEM file)", k.Domain)
 		}
 		k.Selector = strings.TrimSpace(k.Selector)
-		if k.KeyData != "" {
-			if _, err := dkim.ParseSigner([]byte(k.KeyData)); err != nil {
-				return fmt.Errorf("dkim for %s: invalid inline key: %w", k.Domain, err)
-			}
+		if _, err := dkim.ParseSigner([]byte(k.KeyData)); err != nil {
+			return fmt.Errorf("dkim for %s: invalid inline key: %w", k.Domain, err)
 		}
 	}
 	if c.Delivery.MaxAttempts < 1 {
@@ -698,24 +614,14 @@ func (c *Config) normalizeAndValidate() error {
 // decodeYAMLKey converts the YAML key_data (base64 of the PEM file) into PEM
 // text. The base64 string may contain line breaks or spaces.
 func (k *DKIMKey) decodeYAMLKey() error {
-	raw := k.KeyData
-	if strings.TrimSpace(raw) == "" {
+	if strings.TrimSpace(k.KeyData) == "" {
 		return fmt.Errorf("missing key_data (base64 of the private key)")
 	}
-	compact := strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
-			return -1
-		}
-		return r
-	}, raw)
-	decoded, err := base64.StdEncoding.DecodeString(compact)
+	decoded, err := decodeBase64Key(k.KeyData)
 	if err != nil {
-		return fmt.Errorf("key_data must be base64-encoded PEM: %v", err)
+		return fmt.Errorf("key_data: %v", err)
 	}
-	if !strings.Contains(string(decoded), "-----BEGIN") {
-		return fmt.Errorf("key_data decodes to something that is not a PEM private key")
-	}
-	k.KeyData = string(decoded)
+	k.KeyData = decoded
 	return nil
 }
 

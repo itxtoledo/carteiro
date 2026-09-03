@@ -199,12 +199,10 @@ func genTestKey(t *testing.T) string {
 	return string(pemBytes)
 }
 
-func TestLoadDKIMFromEnvPEM(t *testing.T) {
+func TestLoadDKIMFromEnvKeys(t *testing.T) {
 	configViaEnvIsolada(t)
-	t.Setenv("CARTEIRO_DKIM_DOMAIN", "x.com")
-	t.Setenv("CARTEIRO_DKIM_SELECTOR", "sel")
-	// PEM with escaped "\n" line breaks, as used in docker run / env files.
-	t.Setenv("CARTEIRO_DKIM_KEY", strings.ReplaceAll(genTestKey(t), "\n", `\n`))
+	key := base64.StdEncoding.EncodeToString([]byte(genTestKey(t)))
+	t.Setenv("CARTEIRO_DKIM_KEYS", "x.com:sel:"+key)
 
 	cfg, err := Load("")
 	if err != nil {
@@ -222,24 +220,24 @@ func TestLoadDKIMFromEnvPEM(t *testing.T) {
 	}
 }
 
-func TestLoadDKIMFromEnvBase64(t *testing.T) {
+func TestLoadDKIMFromEnvKeysDefaultSelector(t *testing.T) {
 	configViaEnvIsolada(t)
-	t.Setenv("CARTEIRO_DKIM_DOMAIN", "x.com")
-	t.Setenv("CARTEIRO_DKIM_KEY", base64.StdEncoding.EncodeToString([]byte(genTestKey(t))))
+	key := base64.StdEncoding.EncodeToString([]byte(genTestKey(t)))
+	t.Setenv("CARTEIRO_DKIM_KEYS", "x.com::"+key)
 
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(cfg.DKIM) != 1 || !strings.Contains(cfg.DKIM[0].KeyData, "-----BEGIN") {
-		t.Fatalf("base64 key not decoded: %+v", cfg.DKIM)
+	if len(cfg.DKIM) != 1 || cfg.DKIM[0].Selector != "mail" {
+		t.Fatalf("selector should default to mail: %+v", cfg.DKIM)
 	}
 }
 
 func TestLoadDKIMEnvOverridesYAML(t *testing.T) {
 	configViaEnvIsolada(t)
-	t.Setenv("CARTEIRO_DKIM_DOMAIN", "x.com")
-	t.Setenv("CARTEIRO_DKIM_KEY_FILE", "/tmp/do-env.key")
+	envKey := base64.StdEncoding.EncodeToString([]byte(genTestKey(t)))
+	t.Setenv("CARTEIRO_DKIM_KEYS", "x.com:env-sel:"+envKey)
 	p := writeTemp(t, `
 dkim:
   - domain: "x.com"
@@ -258,7 +256,7 @@ dkim:
 	}
 	for _, k := range cfg.DKIM {
 		if k.Domain == "x.com" {
-			if k.KeyFile != "/tmp/do-env.key" {
+			if k.Selector != "env-sel" || !strings.Contains(k.KeyData, "-----BEGIN") {
 				t.Errorf("env should override YAML for x.com: %+v", k)
 			}
 			continue
@@ -304,22 +302,20 @@ dkim:
 
 func TestLoadDKIMEnvErrors(t *testing.T) {
 	configViaEnvIsolada(t)
-	// Key without domain.
-	t.Setenv("CARTEIRO_DKIM_KEY", "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----")
-	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "CARTEIRO_DKIM_DOMAIN") {
-		t.Fatalf("expected missing-domain error, got %v", err)
+	// Missing key material entirely.
+	t.Setenv("CARTEIRO_DKIM_KEYS", "x.com:mail")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "domain:selector:base64") {
+		t.Fatalf("expected format error, got %v", err)
 	}
-	// Both key and key_file.
-	t.Setenv("CARTEIRO_DKIM_DOMAIN", "x.com")
-	t.Setenv("CARTEIRO_DKIM_KEY_FILE", "/tmp/k")
-	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "not both") {
-		t.Fatalf("expected both-set error, got %v", err)
-	}
-	// Garbage inline key.
-	t.Setenv("CARTEIRO_DKIM_KEY_FILE", "")
-	t.Setenv("CARTEIRO_DKIM_KEY", "this-is-not-a-key")
+	// Key must be base64 of a PEM; raw PEM or garbage is rejected.
+	os.Unsetenv("CARTEIRO_DKIM_KEYS")
+	t.Setenv("CARTEIRO_DKIM_KEYS", "x.com:mail:this-is-not-a-key")
 	if _, err := Load(""); err == nil {
-		t.Fatal("expected an error for an invalid inline key")
+		t.Fatal("expected an error for an invalid base64 key")
+	}
+	t.Setenv("CARTEIRO_DKIM_KEYS", "x.com:mail:"+base64.StdEncoding.EncodeToString([]byte("not a pem at all")))
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "PEM") {
+		t.Fatalf("expected a PEM error, got %v", err)
 	}
 }
 
@@ -398,13 +394,9 @@ func TestLoadDKIMKeysMultiDomainEnv(t *testing.T) {
 	configViaEnvIsolada(t)
 	keyA := genTestKey(t)
 	keyB := genTestKey(t)
-	// Two domains in one list: A as base64 inline, B as a file path.
-	keyBPath := filepath.Join(t.TempDir(), "b.key")
-	if err := os.WriteFile(keyBPath, []byte(keyB), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// Two domains in one list, both as base64 (the only accepted form).
 	list := "doma.com:mail:" + base64.StdEncoding.EncodeToString([]byte(keyA)) +
-		";domb.com:selector-b:" + keyBPath
+		";domb.com:selector-b:" + base64.StdEncoding.EncodeToString([]byte(keyB))
 	t.Setenv("CARTEIRO_DKIM_KEYS", list)
 
 	cfg, err := Load("")
@@ -423,36 +415,15 @@ func TestLoadDKIMKeysMultiDomainEnv(t *testing.T) {
 		t.Errorf("doma.com key wrong: %+v", byDomain)
 	}
 	b, ok := byDomain["domb.com"]
-	if !ok || b.Selector != "selector-b" || b.KeyFile != keyBPath {
+	if !ok || b.Selector != "selector-b" || !strings.Contains(b.KeyData, "-----BEGIN") {
 		t.Errorf("domb.com key wrong: %+v", byDomain)
-	}
-}
-
-func TestLoadDKIMSingularOverridesList(t *testing.T) {
-	configViaEnvIsolada(t)
-	keyA := genTestKey(t)
-	t.Setenv("CARTEIRO_DKIM_KEYS", "doma.com:mail:"+base64.StdEncoding.EncodeToString([]byte(keyA)))
-	// Singular vars replace the list entry for the same domain.
-	t.Setenv("CARTEIRO_DKIM_DOMAIN", "doma.com")
-	t.Setenv("CARTEIRO_DKIM_SELECTOR", "other-selector")
-	t.Setenv("CARTEIRO_DKIM_KEY_FILE", "/tmp/key-from-singular")
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if len(cfg.DKIM) != 1 {
-		t.Fatalf("DKIM entries = %d, want 1", len(cfg.DKIM))
-	}
-	if cfg.DKIM[0].Selector != "other-selector" || cfg.DKIM[0].KeyFile != "/tmp/key-from-singular" {
-		t.Errorf("singular should win: %+v", cfg.DKIM[0])
 	}
 }
 
 func TestLoadDKIMKeysInvalidEntry(t *testing.T) {
 	configViaEnvIsolada(t)
 	t.Setenv("CARTEIRO_DKIM_KEYS", "doma.com:mail")
-	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "domain:selector:key") {
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "domain:selector:base64") {
 		t.Fatalf("expected format error, got %v", err)
 	}
 	t.Setenv("CARTEIRO_DKIM_KEYS", "doma.com:mail:not-a-key")
