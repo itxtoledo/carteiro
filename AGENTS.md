@@ -116,6 +116,18 @@ logs**: `created`, `updated (new password or allowed_from)`, `unchanged`
 report `unchanged`. Seeds never delete rows — runtime changes belong to the
 API. Keep the logSeed format and the idempotence when editing.
 
+## Logging (logmask)
+
+`CARTEIRO_LOG_MASK_EMAILS` (`log_mask_emails`, **default `true`**) masks
+e-mail addresses in log messages and attributes via `internal/logmask`
+(first char + `***` per label, public suffix kept). The mask is applied
+centrally in `main` with `logmask.NewLogger`, so every package logging
+through the shared logger is covered (seeds, smtpd, relay, api). Set it to
+`false` only for debugging with full addresses. Rule: strings without `@` are
+never altered. When adding a new log line with addresses, no per-site change
+is needed; keep log values as plain strings/slices so the handler can reach
+them.
+
 ## SMTP behavior (smtpd)
 
 - Banner `220 <hostname> ESMTP Carteiro`; EHLO advertises PIPELINING,

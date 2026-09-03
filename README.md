@@ -141,6 +141,7 @@ stays **off** until the token is configured.
 | `CARTEIRO_TLS_CERT` / `CARTEIRO_TLS_KEY` | — | enable TLS with base64 of the PEM cert/key (files are not supported) |
 | `CARTEIRO_TLS_MODE` | `starttls` | `starttls` (587) or `implicit` (465) |
 | `CARTEIRO_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `CARTEIRO_LOG_MASK_EMAILS` | `true` | e-mails are masked in the logs (`joao@example.com` → `j***@e***.com`); set `false` to log full addresses (debugging only) |
 | `CARTEIRO_CONFIG` | — | path to the YAML file |
 
 > **Security**: without TLS and with `require_tls: false` (the default), the

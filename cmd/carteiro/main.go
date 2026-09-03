@@ -19,6 +19,7 @@ import (
 	"carteiro/internal/api"
 	"carteiro/internal/config"
 	"carteiro/internal/dkim"
+	"carteiro/internal/logmask"
 	"carteiro/internal/metrics"
 	"carteiro/internal/relay"
 	"carteiro/internal/smtpd"
@@ -50,7 +51,7 @@ func run() error {
 		return err
 	}
 
-	logger := newLogger(cfg.LogLevel)
+	logger := logmask.NewLogger(newLogger(cfg.LogLevel), cfg.LogMaskEmails)
 
 	dbPath, err := resolveDBPath(cfg)
 	if err != nil {

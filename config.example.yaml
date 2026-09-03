@@ -29,6 +29,13 @@ require_tls: false
 # debug | info | warn | error
 log_level: "info"
 
+# Mask e-mail addresses in the logs so a log file can be shared without
+# leaking who the messages go to/come from:
+#   joao.silva@mx.example.com.br -> j***@e***.com.br
+# Masking is ON by default. Set log_mask_emails: false only when you need
+# the full addresses in the logs (debugging).
+# log_mask_emails: true
+
 # --- Storage (database) ------------------------------------------------------
 # All state lives in a database: accounts, DKIM keys, API-created data and the
 # message queue. Nothing is kept only in memory, and accounts/domains can be

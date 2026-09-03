@@ -359,6 +359,7 @@ func TestDeliveryAndQueueEnvOverrides(t *testing.T) {
 	t.Setenv("CARTEIRO_DELIVERY_CONCURRENCY", "3")
 	t.Setenv("CARTEIRO_DELIVERY_RETRY_BASE", "42s")
 	t.Setenv("CARTEIRO_QUEUE_DEAD_MAX", "25")
+	t.Setenv("CARTEIRO_LOG_MASK_EMAILS", "true")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -372,16 +373,29 @@ func TestDeliveryAndQueueEnvOverrides(t *testing.T) {
 	if cfg.Queue.DeadMax != 25 {
 		t.Errorf("queue dead_max env = %d", cfg.Queue.DeadMax)
 	}
+	if !cfg.LogMaskEmails {
+		t.Error("log_mask_emails env should be true")
+	}
 	// Defaults when nothing is set.
 	for _, k := range []string{
 		"CARTEIRO_DELIVERY_MAX_ATTEMPTS", "CARTEIRO_DELIVERY_CONCURRENCY",
 		"CARTEIRO_DELIVERY_RETRY_BASE", "CARTEIRO_QUEUE_DEAD_MAX",
+		"CARTEIRO_LOG_MASK_EMAILS",
 	} {
 		os.Unsetenv(k)
 	}
 	cfgD, _ := Load("")
 	if cfgD.Delivery.MaxAttempts != 10 || cfgD.Queue.DeadMax != 1000 {
 		t.Errorf("delivery/queue defaults wrong: attempts=%d dead_max=%d", cfgD.Delivery.MaxAttempts, cfgD.Queue.DeadMax)
+	}
+	if !cfgD.LogMaskEmails {
+		t.Error("log_mask_emails should default to true (emails hidden)")
+	}
+	// Explicit false disables the mask (full addresses in logs).
+	t.Setenv("CARTEIRO_LOG_MASK_EMAILS", "false")
+	cfgF, _ := Load("")
+	if cfgF.LogMaskEmails {
+		t.Error("log_mask_emails=false should disable the mask")
 	}
 	// Invalid durations are rejected.
 	t.Setenv("CARTEIRO_DELIVERY_RETRY_BASE", "abc")

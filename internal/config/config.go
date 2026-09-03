@@ -174,6 +174,7 @@ type Config struct {
 	RequireTLS      bool     `yaml:"require_tls"`
 	InsecureAuthMsg string   `yaml:"-"`
 	LogLevel        string   `yaml:"log_level"`
+	LogMaskEmails   bool     `yaml:"log_mask_emails"`
 
 	API      *API      `yaml:"api"`
 	Queue    QueueCfg  `yaml:"queue"`
@@ -200,6 +201,7 @@ func defaults() *Config {
 		MaxRecipients:  100,
 		RequireTLS:     false,
 		LogLevel:       "info",
+		LogMaskEmails:  true,
 		Delivery:       Delivery{ConnectTimeout: Duration(30 * time.Second), IOTimeout: Duration(2 * time.Minute), RetryBase: Duration(time.Minute), RetryMax: Duration(4 * time.Hour), MaxAttempts: 10, PollInterval: Duration(5 * time.Second), Concurrency: 4},
 		Queue:          QueueCfg{DeadMax: 1000},
 	}
@@ -388,6 +390,9 @@ func applyEnv(c *Config) error {
 		c.MaxRecipients = n
 	}
 	if err := setBool("CARTEIRO_REQUIRE_TLS", &c.RequireTLS); err != nil {
+		return err
+	}
+	if err := setBool("CARTEIRO_LOG_MASK_EMAILS", &c.LogMaskEmails); err != nil {
 		return err
 	}
 	if v := os.Getenv("CARTEIRO_STORAGE_TYPE"); v != "" {
