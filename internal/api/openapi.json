@@ -1,0 +1,341 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Carteiro admin API",
+    "description": "Administrative REST API of the Carteiro SMTP relay. Manages SMTP accounts, DKIM signing domains and the message queue. Every endpoint except /health, /metrics and /openapi.json requires the single bearer token configured in api.token (or CARTEIRO_API_TOKEN).",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "http://127.0.0.1:9090" }
+  ],
+  "security": [
+    { "BearerAuth": [] }
+  ],
+  "tags": [
+    { "name": "accounts" },
+    { "name": "dkim" },
+    { "name": "queue" },
+    { "name": "system" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Liveness probe",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Server is alive",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Prometheus metrics",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metrics in the Prometheus text format",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": ["system"],
+        "summary": "This OpenAPI document (for Swagger UI)",
+        "security": [],
+        "responses": {
+          "200": { "description": "OpenAPI JSON document" }
+        }
+      }
+    },
+    "/accounts": {
+      "get": {
+        "tags": ["accounts"],
+        "summary": "List accounts (emails and allowed_from, never password hashes)",
+        "responses": {
+          "200": {
+            "description": "Accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/AccountView" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["accounts"],
+        "summary": "Create or update an account (password is bcrypt-hashed server side)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AccountInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Account created" },
+          "200": { "description": "Account updated" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/accounts/{email}": {
+      "delete": {
+        "tags": ["accounts"],
+        "summary": "Delete an account",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "email" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Account deleted" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/dkim": {
+      "get": {
+        "tags": ["dkim"],
+        "summary": "List DKIM domains and selectors (never the private keys)",
+        "responses": {
+          "200": {
+            "description": "DKIM keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/DKIMView" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["dkim"],
+        "summary": "Create or update a DKIM signing key for a domain",
+        "description": "key_data is the PEM text of the private key (RSA or Ed25519). Publish the public part at <selector>._domainkey.<domain>.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DKIMInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "DKIM key created" },
+          "200": { "description": "DKIM key updated" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/dkim/{domain}": {
+      "delete": {
+        "tags": ["dkim"],
+        "summary": "Delete the DKIM key of a domain",
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "DKIM key deleted" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/queue/stats": {
+      "get": {
+        "tags": ["queue"],
+        "summary": "Queue counters (queued, due, dead)",
+        "responses": {
+          "200": {
+            "description": "Queue stats",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/QueueStats" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/queue": {
+      "get": {
+        "tags": ["queue"],
+        "summary": "List queued or dead messages (metadata only, no bodies)",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["queued", "dead"] }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 1000 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/MessageLite" }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/queue/{id}/retry": {
+      "post": {
+        "tags": ["queue"],
+        "summary": "Move a dead message back to the queue (attempts reset)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Message requeued" },
+          "404": {
+            "description": "Message not found or not in the dead state"
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Invalid or missing bearer token",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string" }
+        }
+      },
+      "AccountView": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "allowed_from": {
+            "type": "array",
+            "items": { "type": "string", "format": "email" }
+          }
+        }
+      },
+      "AccountInput": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "format": "password" },
+          "allowed_from": {
+            "type": "array",
+            "items": { "type": "string", "format": "email" }
+          }
+        }
+      },
+      "DKIMView": {
+        "type": "object",
+        "properties": {
+          "domain": { "type": "string" },
+          "selector": { "type": "string" }
+        }
+      },
+      "DKIMInput": {
+        "type": "object",
+        "required": ["domain", "selector", "key_data"],
+        "properties": {
+          "domain": { "type": "string" },
+          "selector": { "type": "string" },
+          "key_data": { "type": "string", "description": "PEM private key text" }
+        }
+      },
+      "QueueStats": {
+        "type": "object",
+        "properties": {
+          "queued": { "type": "integer" },
+          "due": { "type": "integer" },
+          "dead": { "type": "integer" }
+        }
+      },
+      "MessageLite": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "sender": { "type": "string" },
+          "to": {
+            "type": "array",
+            "items": { "type": "string", "format": "email" }
+          },
+          "attempts": { "type": "integer" },
+          "next_attempt": { "type": "string", "format": "date-time" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "last_error": { "type": "string" },
+          "permanent": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

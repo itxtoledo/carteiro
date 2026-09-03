@@ -1,0 +1,118 @@
+# =============================================================================
+# Carteiro - SMTP relay (example configuration)
+# =============================================================================
+# Precedence: system defaults < this file < CARTEIRO_* environment variables.
+# The config file is looked up at: /etc/carteiro/config.yaml (Linux),
+# ~/.config/carteiro/config.yaml (Linux) or
+# ~/Library/Application Support/carteiro/config.yaml (macOS).
+# You can also pass one explicitly: carteiro --config path/to/config.yaml
+# =============================================================================
+
+# Address of the SMTP submission server (where Nodemailer connects).
+listen: ":587"
+
+# Name used in the banner/EHLO towards the destination MX. There should be a
+# PTR (reverse DNS) record pointing this hostname to the outbound IP
+# (see README, DNS section).
+hostname: "smtp.yourdomain.com"
+
+# Maximum message size in bytes (default: 26214400 = 25 MiB).
+max_message_size: 26214400
+
+# Maximum recipients per message.
+max_recipients: 100
+
+# true  = require STARTTLS (or a loopback connection) before AUTH.
+# false = accept plain-text AUTH (default; only on private networks/VPN).
+require_tls: false
+
+# debug | info | warn | error
+log_level: "info"
+
+# --- Storage (database) ------------------------------------------------------
+# All state lives in a database: accounts, DKIM keys, API-created data and the
+# message queue. Nothing is kept only in memory, and accounts/domains can be
+# added over the air through the admin API below.
+storage:
+  # sqlite (default, single file, perfect for one container) or mysql.
+  type: sqlite
+  # SQLite database file. Empty = system default data directory
+  # (/var/lib/carteiro on Linux root/systemd, ~/.local/share/carteiro or
+  # ~/Library/Application Support/carteiro otherwise).
+  sqlite_path: "/var/lib/carteiro/carteiro.db"
+  # MySQL connection string (used when type: mysql). Empty for sqlite.
+  dsn: ""
+
+# --- Admin API (bearer tokens, monitoring) -----------------------------------
+# Optional. The single token is plain text here (or CARTEIRO_API_TOKEN) and
+# is the ONLY place it exists: it is never stored in the database - only the
+# server owner sees the config. Without the token the API stays off.
+api:
+  listen: "127.0.0.1:9090"   # bind to localhost; expose only if needed
+  token: "CHANGE-ME-a-long-random-token"
+
+# --- Optional TLS -----------------------------------------------------------
+# Without this block the server runs without TLS (use behind VPN/loopback or
+# with require_tls: false). With the block, STARTTLS is advertised and AUTH
+# can be required to use TLS (require_tls: true). For port 465 (implicit TLS)
+# use mode: "implicit".
+# tls:
+#   cert_file: "/etc/carteiro/tls.crt"
+#   key_file:  "/etc/carteiro/tls.key"
+#   mode: "starttls"   # or "implicit"
+
+# --- MX delivery ------------------------------------------------------------
+delivery:
+  # Timeout for opening the TCP connection to the MX.
+  connect_timeout: 30s
+  # Total timeout for one SMTP exchange with the MX.
+  io_timeout: 2m
+  # Initial retry delay (doubles each attempt: 1m, 2m, 4m, 8m...).
+  retry_base: 1m
+  # Upper bound for the delay between attempts.
+  retry_max: 4h
+  # Maximum number of attempts before moving to dead-letter.
+  max_attempts: 10
+  # How often the queue is scanned.
+  poll_interval: 5s
+  # Concurrent deliveries.
+  concurrency: 4
+
+# --- Queue tuning -------------------------------------------------------------
+# Retry/backoff and dead-letter cap. Every value also has an environment
+# variable (CARTEIRO_DELIVERY_MAX_ATTEMPTS, CARTEIRO_DELIVERY_RETRY_BASE, ...,
+# CARTEIRO_QUEUE_DEAD_MAX).
+queue:
+  # Maximum number of dead-letter rows kept; beyond it the oldest are pruned.
+  # 0 disables the limit.
+  dead_max: 1000
+
+# --- Seeds (initial accounts and DKIM keys) ----------------------------------
+# The arrays below (or the CARTEIRO_* environment equivalents) are UPSERTED
+# into the database on every startup: created / updated / unchanged is logged
+# for each entry, clearly. They are seeds: once loaded, accounts and DKIM
+# domains are managed over the air through the admin API - editing this file
+# later does NOT delete database rows.
+
+# Account passwords are hashed (bcrypt) before being stored. Each account is
+# a Nodemailer login; the MAIL FROM (envelope) must be the account email
+# itself or one of the allowed_from entries below.
+accounts:
+  - email: "sender@yourdomain.com"
+    password: "CHANGE-THIS-PASSWORD"
+    # allowed_from:
+    #   - "news@yourdomain.com"
+
+# DKIM seeds: one entry per sender domain. In YAML the key is passed ONLY as
+# key_data with the BASE64 of the PEM file (one line), never a filesystem
+# path:
+#   openssl genrsa -out dkim.key 2048 && KEY=$(base64 -w0 dkim.key)
+# dkim:
+#   - domain: "yourdomain.com"
+#     selector: "mail"
+#     key_data: "PASTE-THE-BASE64-HERE"
+# Environment alternative (env keys may also use file paths):
+# single domain: CARTEIRO_DKIM_DOMAIN/SELECTOR + CARTEIRO_DKIM_KEY (base64)
+# several:       CARTEIRO_DKIM_KEYS = "doma.com:mail:<b64>;domb.com:sel:<b64>"
+# The PEM is decoded and stored in the database (upserted on every boot).
+# Publish each public key at: <selector>._domainkey.<domain>  (see README).

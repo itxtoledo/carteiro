@@ -1,0 +1,43 @@
+# Example run with docker compose. Usage:
+#
+#   cp config.example.yaml config.yaml   # edit accounts/passwords/api token
+#   docker compose up -d
+#
+# State lives in the SQLite database inside the named volume
+# carteiro-data (/var/lib/carteiro/carteiro.db inside the container) and
+# survives restarts. For MySQL, set storage.type + storage.dsn instead.
+#
+# Warning: with require_tls: false (the default) AUTH travels in plain text.
+# Expose the SMTP port only on a private network/VPN, or enable TLS + STARTTLS.
+
+services:
+  carteiro:
+    image: carteiro:local
+    build: .
+    container_name: carteiro
+    restart: unless-stopped
+    ports:
+      - "587:587"      # SMTP submission
+      - "9090:9090"    # admin API (bind to 127.0.0.1 on the host if possible)
+    environment:
+      # Seed account (upserted on startup, logged clearly):
+      CARTEIRO_ACCOUNTS: "sender@yourdomain.com:AVERYSTRONGPASSWORD"
+      # Seed DKIM (optional). Single domain:
+      # CARTEIRO_DKIM_DOMAIN: "yourdomain.com"
+      # CARTEIRO_DKIM_SELECTOR: "mail"
+      # CARTEIRO_DKIM_KEY: |
+      #   -----BEGIN RSA PRIVATE KEY-----
+      #   ...base64 lines...
+      #   -----END RSA PRIVATE KEY-----
+      # Or several domains at once (file paths or base64 PEM, ';' separated):
+      # CARTEIRO_DKIM_KEYS: "doma.com:mail:/etc/carteiro/doma.key;domb.com:mail:/etc/carteiro/domb.key"
+      # Admin API bearer token, singular (never stored in the DB):
+      CARTEIRO_API_TOKEN: "CHANGE-ME-a-long-random-token"
+      # CARTEIRO_API_LISTEN: ":9090"
+      # CARTEIRO_REQUIRE_TLS: "false"
+    volumes:
+      - carteiro-data:/var/lib/carteiro
+      # - ./config.yaml:/etc/carteiro/config.yaml:ro   # full config instead of env
+
+volumes:
+  carteiro-data:

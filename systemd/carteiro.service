@@ -1,0 +1,29 @@
+[Unit]
+Description=Carteiro SMTP relay (disk queue + MX delivery)
+Documentation=https://github.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=carteiro
+Group=carteiro
+
+# Creates /var/lib/carteiro (StateDirectory) owned by carteiro.
+StateDirectory=carteiro
+RuntimeDirectory=carteiro
+
+# Config: /etc/carteiro/config.yaml (managed by the operator).
+ExecStart=/usr/local/bin/carteiro --config /etc/carteiro/config.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Basic hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/carteiro
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

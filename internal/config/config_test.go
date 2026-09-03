@@ -1,0 +1,445 @@
+package config
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func writeTemp(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// configViaEnvIsolada points CARTEIRO_CONFIG to an empty temp file so that a
+// real system config cannot interfere with the env tests.
+func configViaEnvIsolada(t *testing.T) {
+	t.Helper()
+	t.Setenv("CARTEIRO_CONFIG", writeTemp(t, ""))
+}
+
+func TestLoadFromFileWithDefaults(t *testing.T) {
+	configViaEnvIsolada(t)
+	p := writeTemp(t, `
+listen: "127.0.0.1:2525"
+hostname: "smtp.example.com"
+accounts:
+  - email: "Sender@Example.com"
+    password: "secret1"
+    allowed_from:
+      - "news@Example.com"
+delivery:
+  max_attempts: 3
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Listen != "127.0.0.1:2525" {
+		t.Errorf("listen = %q", cfg.Listen)
+	}
+	if cfg.Hostname != "smtp.example.com" {
+		t.Errorf("hostname = %q", cfg.Hostname)
+	}
+	if cfg.Storage == nil || cfg.Storage.Type != "sqlite" {
+		t.Errorf("default storage = %+v", cfg.Storage)
+	}
+	if cfg.MaxMessageSize != 25<<20 {
+		t.Errorf("default max_message_size = %d", cfg.MaxMessageSize)
+	}
+	if cfg.Delivery.MaxAttempts != 3 {
+		t.Errorf("max_attempts = %d", cfg.Delivery.MaxAttempts)
+	}
+	if cfg.Delivery.PollInterval.D() == 0 {
+		t.Error("poll_interval default lost")
+	}
+	if len(cfg.Accounts) != 1 {
+		t.Fatalf("accounts = %d, want 1", len(cfg.Accounts))
+	}
+	if cfg.Accounts[0].Email != "sender@example.com" {
+		t.Errorf("account email not normalized: %q", cfg.Accounts[0].Email)
+	}
+	if len(cfg.Accounts[0].AllowedFrom) != 1 || cfg.Accounts[0].AllowedFrom[0] != "news@example.com" {
+		t.Errorf("allowed_from not normalized: %v", cfg.Accounts[0].AllowedFrom)
+	}
+}
+
+func TestLoadEnvAccounts(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_LISTEN", ":9999")
+	t.Setenv("CARTEIRO_ACCOUNTS", "a@x.com:p1;b@x.com:p2")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Listen != ":9999" {
+		t.Errorf("listen = %q", cfg.Listen)
+	}
+	if len(cfg.Accounts) != 2 {
+		t.Fatalf("accounts = %d, want 2", len(cfg.Accounts))
+	}
+}
+
+func TestEnvAccountOverridesFile(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_ACCOUNTS", "duplicated@x.com:new-password")
+	p := writeTemp(t, `
+accounts:
+  - email: "duplicated@x.com"
+    password: "old-password"
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Accounts) != 1 {
+		t.Fatalf("accounts = %d, want 1", len(cfg.Accounts))
+	}
+	if cfg.Accounts[0].Password != "new-password" {
+		t.Error("the env account should override the file one")
+	}
+}
+
+func TestLoadAllowsZeroAccounts(t *testing.T) {
+	configViaEnvIsolada(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("accounts are optional (admin API), Load: %v", err)
+	}
+	if len(cfg.Accounts) != 0 {
+		t.Errorf("accounts = %d", len(cfg.Accounts))
+	}
+}
+
+func TestLoadRejectsBadEnvAccounts(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_ACCOUNTS", "no-separator")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected an error for an entry without ':'")
+	}
+}
+
+func TestEnvRequiresBothTLSFiles(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_ACCOUNTS", "a@x.com:p")
+	t.Setenv("CARTEIRO_TLS_CERT_FILE", "/tmp/x.crt")
+	t.Setenv("CARTEIRO_TLS_KEY_FILE", "")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected an error with only cert set")
+	}
+}
+
+func TestTLSModeValidation(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_ACCOUNTS", "a@x.com:p")
+	p := writeTemp(t, "tls:\n  cert_file: /tmp/c\n  key_file: /tmp/k\n  mode: errado\n")
+	if _, err := Load(p); err == nil {
+		t.Fatal("expected an error for an invalid tls.mode")
+	}
+}
+
+func TestConfigFlagDoesNotExist(t *testing.T) {
+	if _, err := Load("/does/not/exist.yaml"); err == nil {
+		t.Fatal("expected an error for a nonexistent config")
+	}
+}
+
+func TestStorageMySQLRequiresDSN(t *testing.T) {
+	configViaEnvIsolada(t)
+	p := writeTemp(t, "storage:\n  type: mysql\n")
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "dsn") {
+		t.Fatalf("expected a DSN error for mysql, got %v", err)
+	}
+	t.Setenv("CARTEIRO_DB_DSN", "user:pass@tcp(db:3306)/carteiro")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load with CARTEIRO_DB_DSN: %v", err)
+	}
+	if cfg.Storage.Type != "mysql" || cfg.Storage.DSN == "" {
+		t.Errorf("env dsn did not select mysql: %+v", cfg.Storage)
+	}
+}
+
+func genTestKey(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	return string(pemBytes)
+}
+
+func TestLoadDKIMFromEnvPEM(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_DKIM_DOMAIN", "x.com")
+	t.Setenv("CARTEIRO_DKIM_SELECTOR", "sel")
+	// PEM with escaped "\n" line breaks, as used in docker run / env files.
+	t.Setenv("CARTEIRO_DKIM_KEY", strings.ReplaceAll(genTestKey(t), "\n", `\n`))
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.DKIM) != 1 {
+		t.Fatalf("DKIM entries = %d, want 1", len(cfg.DKIM))
+	}
+	k := cfg.DKIM[0]
+	if k.Domain != "x.com" || k.Selector != "sel" {
+		t.Errorf("dkim key metadata wrong: %+v", k)
+	}
+	if k.KeyData == "" || !strings.Contains(k.KeyData, "-----BEGIN RSA PRIVATE KEY-----") {
+		t.Error("inline key data missing or malformed")
+	}
+}
+
+func TestLoadDKIMFromEnvBase64(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_DKIM_DOMAIN", "x.com")
+	t.Setenv("CARTEIRO_DKIM_KEY", base64.StdEncoding.EncodeToString([]byte(genTestKey(t))))
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.DKIM) != 1 || !strings.Contains(cfg.DKIM[0].KeyData, "-----BEGIN") {
+		t.Fatalf("base64 key not decoded: %+v", cfg.DKIM)
+	}
+}
+
+func TestLoadDKIMEnvOverridesYAML(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_DKIM_DOMAIN", "x.com")
+	t.Setenv("CARTEIRO_DKIM_KEY_FILE", "/tmp/do-env.key")
+	p := writeTemp(t, `
+dkim:
+  - domain: "x.com"
+    selector: "yaml"
+    key_data: "`+base64.StdEncoding.EncodeToString([]byte(genTestKey(t)))+`"
+  - domain: "y.com"
+    selector: "yaml2"
+    key_data: "`+base64.StdEncoding.EncodeToString([]byte(genTestKey(t)))+`"
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.DKIM) != 2 {
+		t.Fatalf("DKIM entries = %d, want 2", len(cfg.DKIM))
+	}
+	for _, k := range cfg.DKIM {
+		if k.Domain == "x.com" {
+			if k.KeyFile != "/tmp/do-env.key" {
+				t.Errorf("env should override YAML for x.com: %+v", k)
+			}
+			continue
+		}
+		if k.Domain != "y.com" {
+			t.Errorf("unexpected dkim domain: %+v", k)
+		}
+	}
+}
+
+// YAML key_data must be base64 of a PEM key; direct PEM or garbage is
+// rejected.
+func TestLoadDKIMYAMLKeyDataMustBeBase64(t *testing.T) {
+	configViaEnvIsolada(t)
+	pem := genTestKey(t)
+	bad := writeTemp(t, `
+dkim:
+  - domain: "x.com"
+    selector: "mail"
+    key_data: "`+pem+`"
+`)
+	if _, err := Load(bad); err == nil {
+		t.Fatal("expected an error when key_data is raw PEM instead of base64")
+	}
+	garbage := writeTemp(t, `
+dkim:
+  - domain: "x.com"
+    selector: "mail"
+    key_data: "not-base64-!!"
+`)
+	if _, err := Load(garbage); err == nil {
+		t.Fatal("expected an error for non-base64 key_data")
+	}
+	missing := writeTemp(t, `
+dkim:
+  - domain: "x.com"
+    selector: "mail"
+`)
+	if _, err := Load(missing); err == nil || !strings.Contains(err.Error(), "key_data") {
+		t.Fatalf("expected missing key_data error, got %v", err)
+	}
+}
+
+func TestLoadDKIMEnvErrors(t *testing.T) {
+	configViaEnvIsolada(t)
+	// Key without domain.
+	t.Setenv("CARTEIRO_DKIM_KEY", "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "CARTEIRO_DKIM_DOMAIN") {
+		t.Fatalf("expected missing-domain error, got %v", err)
+	}
+	// Both key and key_file.
+	t.Setenv("CARTEIRO_DKIM_DOMAIN", "x.com")
+	t.Setenv("CARTEIRO_DKIM_KEY_FILE", "/tmp/k")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("expected both-set error, got %v", err)
+	}
+	// Garbage inline key.
+	t.Setenv("CARTEIRO_DKIM_KEY_FILE", "")
+	t.Setenv("CARTEIRO_DKIM_KEY", "this-is-not-a-key")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected an error for an invalid inline key")
+	}
+}
+
+func TestAPIValidation(t *testing.T) {
+	configViaEnvIsolada(t)
+	// Listen without a token is rejected.
+	p := writeTemp(t, `api:
+  listen: "127.0.0.1:9090"
+`)
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "token") {
+		t.Fatalf("expected missing-token error, got %v", err)
+	}
+	// A single token defaults the listen address and is kept plain (not
+	// hashed).
+	p2 := writeTemp(t, "api:\n  token: \"tok-1\"\n")
+	cfg, err := Load(p2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.API.Listen != "127.0.0.1:9090" {
+		t.Errorf("default api listen = %q", cfg.API.Listen)
+	}
+	if cfg.API.Token != "tok-1" {
+		t.Errorf("token wrong: %q", cfg.API.Token)
+	}
+	// Env token (singular).
+	t.Setenv("CARTEIRO_API_TOKEN", "env-tok")
+	t.Setenv("CARTEIRO_API_LISTEN", "127.0.0.1:9191")
+	cfg2, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.API.Listen != "127.0.0.1:9191" || cfg2.API.Token != "env-tok" {
+		t.Errorf("env api config wrong: %+v", cfg2.API)
+	}
+}
+
+func TestDeliveryAndQueueEnvOverrides(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_DELIVERY_MAX_ATTEMPTS", "7")
+	t.Setenv("CARTEIRO_DELIVERY_CONCURRENCY", "3")
+	t.Setenv("CARTEIRO_DELIVERY_RETRY_BASE", "42s")
+	t.Setenv("CARTEIRO_QUEUE_DEAD_MAX", "25")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Delivery.MaxAttempts != 7 || cfg.Delivery.Concurrency != 3 {
+		t.Errorf("delivery env wrong: %+v", cfg.Delivery)
+	}
+	if cfg.Delivery.RetryBase.D() != 42*time.Second {
+		t.Errorf("retry_base env = %v", cfg.Delivery.RetryBase.D())
+	}
+	if cfg.Queue.DeadMax != 25 {
+		t.Errorf("queue dead_max env = %d", cfg.Queue.DeadMax)
+	}
+	// Defaults when nothing is set.
+	for _, k := range []string{
+		"CARTEIRO_DELIVERY_MAX_ATTEMPTS", "CARTEIRO_DELIVERY_CONCURRENCY",
+		"CARTEIRO_DELIVERY_RETRY_BASE", "CARTEIRO_QUEUE_DEAD_MAX",
+	} {
+		os.Unsetenv(k)
+	}
+	cfgD, _ := Load("")
+	if cfgD.Delivery.MaxAttempts != 10 || cfgD.Queue.DeadMax != 1000 {
+		t.Errorf("delivery/queue defaults wrong: attempts=%d dead_max=%d", cfgD.Delivery.MaxAttempts, cfgD.Queue.DeadMax)
+	}
+	// Invalid durations are rejected.
+	t.Setenv("CARTEIRO_DELIVERY_RETRY_BASE", "abc")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected an error for an invalid retry_base")
+	}
+}
+
+func TestLoadDKIMKeysMultiDomainEnv(t *testing.T) {
+	configViaEnvIsolada(t)
+	keyA := genTestKey(t)
+	keyB := genTestKey(t)
+	// Two domains in one list: A as base64 inline, B as a file path.
+	keyBPath := filepath.Join(t.TempDir(), "b.key")
+	if err := os.WriteFile(keyBPath, []byte(keyB), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list := "doma.com:mail:" + base64.StdEncoding.EncodeToString([]byte(keyA)) +
+		";domb.com:selector-b:" + keyBPath
+	t.Setenv("CARTEIRO_DKIM_KEYS", list)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.DKIM) != 2 {
+		t.Fatalf("DKIM entries = %d, want 2 (%+v)", len(cfg.DKIM), cfg.DKIM)
+	}
+	byDomain := map[string]DKIMKey{}
+	for _, k := range cfg.DKIM {
+		byDomain[k.Domain] = k
+	}
+	a, ok := byDomain["doma.com"]
+	if !ok || a.Selector != "mail" || !strings.Contains(a.KeyData, "-----BEGIN") {
+		t.Errorf("doma.com key wrong: %+v", byDomain)
+	}
+	b, ok := byDomain["domb.com"]
+	if !ok || b.Selector != "selector-b" || b.KeyFile != keyBPath {
+		t.Errorf("domb.com key wrong: %+v", byDomain)
+	}
+}
+
+func TestLoadDKIMSingularOverridesList(t *testing.T) {
+	configViaEnvIsolada(t)
+	keyA := genTestKey(t)
+	t.Setenv("CARTEIRO_DKIM_KEYS", "doma.com:mail:"+base64.StdEncoding.EncodeToString([]byte(keyA)))
+	// Singular vars replace the list entry for the same domain.
+	t.Setenv("CARTEIRO_DKIM_DOMAIN", "doma.com")
+	t.Setenv("CARTEIRO_DKIM_SELECTOR", "other-selector")
+	t.Setenv("CARTEIRO_DKIM_KEY_FILE", "/tmp/key-from-singular")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.DKIM) != 1 {
+		t.Fatalf("DKIM entries = %d, want 1", len(cfg.DKIM))
+	}
+	if cfg.DKIM[0].Selector != "other-selector" || cfg.DKIM[0].KeyFile != "/tmp/key-from-singular" {
+		t.Errorf("singular should win: %+v", cfg.DKIM[0])
+	}
+}
+
+func TestLoadDKIMKeysInvalidEntry(t *testing.T) {
+	configViaEnvIsolada(t)
+	t.Setenv("CARTEIRO_DKIM_KEYS", "doma.com:mail")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "domain:selector:key") {
+		t.Fatalf("expected format error, got %v", err)
+	}
+	t.Setenv("CARTEIRO_DKIM_KEYS", "doma.com:mail:not-a-key")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected an error for a bad key material")
+	}
+}

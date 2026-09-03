@@ -1,0 +1,6 @@
+/bin/
+/carteiro
+*.test
+*.out
+.env
+data/
