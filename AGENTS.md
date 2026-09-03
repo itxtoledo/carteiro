@@ -36,6 +36,8 @@ internal/api/         admin REST API (bearer), queue monitoring, metrics,
                       embedded openapi.json
 internal/metrics/     atomic Prometheus counters
 systemd/              example unit (StateDirectory=/var/lib/carteiro)
+scripts/gen-envs.sh   interactive env generator (DKIM/TLS/accounts) for Coolify
+DNS.md                full DNS guide (SPF/DKIM/DMARC/PTR, Cloudflare notes)
 .github/workflows/    single release.yml (image + binaries + release)
 ```
 

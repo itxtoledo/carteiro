@@ -466,6 +466,28 @@ volumes:
 docker compose up -d
 ```
 
+### Generate the env vars interactively
+
+There is a helper script that asks the questions (hostname, account, DKIM
+domain/selector, TLS option) and writes a ready-to-paste `.txt` with every
+`CARTEIRO_*` variable. It generates the DKIM RSA-2048 key pair — and, when
+asked, a self-signed TLS certificate — and prints the DNS records to
+publish (`A`, DKIM `p=`, SPF, PTR). It runs on **macOS and Linux** (only
+`bash` and `openssl` are required):
+
+```bash
+./scripts/gen-envs.sh                    # writes ~/Desktop/carteiro-envs.txt (macOS)
+./scripts/gen-envs.sh                    # writes ~/carteiro-envs.txt (Linux)
+./scripts/gen-envs.sh /path/to/envs.txt  # or pick the output path
+```
+
+> Each run generates **fresh keys**. If you already published the DKIM `p=`
+> in DNS, keep that key and do not re-run the script for the same domain —
+> either reuse the previous `.txt` or add the new key under a new selector.
+
+The script prints the DNS records at the end; the full explanation of each
+one lives in **[DNS.md](DNS.md)**.
+
 ---
 
 ## Daemon mode
@@ -642,6 +664,10 @@ its own `CARTEIRO_SQLITE_PATH` volume.
 ---
 
 ## DNS: keeping email out of spam
+
+> **Full guide**: the section below is the quick version. For every record in
+> depth, Cloudflare-specific notes and a troubleshooting table, see
+> **[DNS.md](DNS.md)**.
 
 Carteiro **only sends** (it does not receive). For Gmail, Outlook etc. to
 deliver to the inbox — not spam — your domain needs **SPF + DKIM + DMARC**
