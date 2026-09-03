@@ -5,6 +5,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -52,11 +53,58 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 func (d Duration) D() time.Duration { return time.Duration(d) }
 
 // TLS configures the optional TLS layer of the submission server.
+//
+// The certificate and key are provided ONLY as base64 of the PEM files (one
+// line each), never as filesystem paths: cert_data/key_data in YAML or
+// CARTEIRO_TLS_CERT/CARTEIRO_TLS_KEY in the environment. They are decoded at
+// load time into CertPEM/KeyPEM.
 type TLS struct {
-	CertFile string `yaml:"cert_file"`
-	KeyFile  string `yaml:"key_file"`
+	CertData string `yaml:"cert_data"`
+	KeyData  string `yaml:"key_data"`
 	// Mode is "starttls" (default) or "implicit" (465).
 	Mode string `yaml:"mode"`
+
+	// Decoded PEM texts (never read from YAML directly).
+	CertPEM string `yaml:"-"`
+	KeyPEM  string `yaml:"-"`
+}
+
+// decodeYAMLBase64 converts cert_data/key_data (base64 of the PEM files)
+// into PEM text. The base64 strings may contain line breaks or spaces.
+func (t *TLS) decodeYAMLBase64() error {
+	decode := func(field, name string) (string, error) {
+		if strings.TrimSpace(field) == "" {
+			return "", fmt.Errorf("missing %s (base64 of the PEM file)", name)
+		}
+		compact := strings.Map(func(r rune) rune {
+			if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
+				return -1
+			}
+			return r
+		}, field)
+		decoded, err := base64.StdEncoding.DecodeString(compact)
+		if err != nil {
+			return "", fmt.Errorf("%s must be base64-encoded PEM: %v", name, err)
+		}
+		if !strings.Contains(string(decoded), "-----BEGIN") {
+			return "", fmt.Errorf("%s decodes to something that is not a PEM file", name)
+		}
+		return string(decoded), nil
+	}
+	if strings.TrimSpace(t.CertData) == "" && strings.TrimSpace(t.KeyData) == "" {
+		return nil // nothing set yet; validation below reports it
+	}
+	cert, err := decode(t.CertData, "cert_data")
+	if err != nil {
+		return err
+	}
+	key, err := decode(t.KeyData, "key_data")
+	if err != nil {
+		return err
+	}
+	t.CertPEM = cert
+	t.KeyPEM = key
+	return nil
 }
 
 // Delivery controls MX delivery.
@@ -79,19 +127,19 @@ type Storage struct {
 	DSN        string `yaml:"dsn"`
 }
 
+// QueueCfg tunes the queue behavior.
+type QueueCfg struct {
+	// DeadMax bounds the dead-letter table (oldest rows are pruned beyond
+	// this). 0 disables the limit.
+	DeadMax int `yaml:"dead_max"`
+}
+
 // API configures the administrative REST API. Token is a single plain-text
 // bearer token; it is intentionally NOT stored in the database - only the
 // server owner sees it (config file or environment).
 type API struct {
 	Listen string `yaml:"listen"`
 	Token  string `yaml:"token"`
-}
-
-// QueueCfg tunes the queue behavior.
-type QueueCfg struct {
-	// DeadMax bounds the dead-letter table (oldest rows are pruned beyond
-	// this). 0 disables the limit.
-	DeadMax int `yaml:"dead_max"`
 }
 
 // Account is a seed account (login + password in plain text). Seeds are
@@ -121,7 +169,7 @@ type DKIMKey struct {
 type Config struct {
 	Listen   string `yaml:"listen"`
 	Hostname string `yaml:"hostname"`
-	// Storage holds the database settings (nil means defaults).
+	// Storage holds the database settings.
 	Storage         *Storage `yaml:"storage"`
 	MaxMessageSize  int64    `yaml:"max_message_size"`
 	MaxRecipients   int      `yaml:"max_recipients"`
@@ -176,11 +224,17 @@ func Load(flagPath string) (*Config, error) {
 		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("parsing config %s: %w", path, err)
 		}
-		// YAML dkim keys are base64-encoded PEM; decode them to PEM text now
-		// (environment entries are appended later, already normalized).
+		// YAML dkim keys and TLS certificates/keys are base64-encoded PEM;
+		// decode them to PEM text now (environment entries are appended
+		// later, already normalized).
 		for i := range cfg.DKIM {
 			if err := cfg.DKIM[i].decodeYAMLKey(); err != nil {
 				return nil, fmt.Errorf("config %s: dkim for %s: %w", path, cfg.DKIM[i].Domain, err)
+			}
+		}
+		if cfg.TLS != nil {
+			if err := cfg.TLS.decodeYAMLBase64(); err != nil {
+				return nil, fmt.Errorf("config %s: tls: %w", path, err)
 			}
 		}
 		ConfigFile = path
@@ -345,15 +399,18 @@ func applyEnv(c *Config) error {
 		c.Storage.DSN = v
 		c.Storage.Type = "mysql"
 	}
-	if cert, key := os.Getenv("CARTEIRO_TLS_CERT_FILE"), os.Getenv("CARTEIRO_TLS_KEY_FILE"); cert != "" || key != "" {
-		if cert == "" || key == "" {
-			return fmt.Errorf("CARTEIRO_TLS_CERT_FILE and CARTEIRO_TLS_KEY_FILE must be set together")
+
+	// TLS from inline base64 (the only supported way; no certificate files).
+	if certData, keyData := os.Getenv("CARTEIRO_TLS_CERT"), os.Getenv("CARTEIRO_TLS_KEY"); certData != "" || keyData != "" {
+		if certData == "" || keyData == "" {
+			return fmt.Errorf("CARTEIRO_TLS_CERT and CARTEIRO_TLS_KEY must be set together")
 		}
-		mode := os.Getenv("CARTEIRO_TLS_MODE")
-		if mode == "" {
-			mode = "starttls"
+		normalized := &TLS{CertData: certData, KeyData: keyData, Mode: os.Getenv("CARTEIRO_TLS_MODE")}
+		if err := normalized.decodeYAMLBase64(); err != nil {
+			return err
 		}
-		c.TLS = &TLS{CertFile: cert, KeyFile: key, Mode: mode}
+		normalized.CertData, normalized.KeyData = "", ""
+		c.TLS = normalized
 	}
 	if v := os.Getenv("CARTEIRO_ACCOUNTS"); v != "" {
 		for _, entry := range strings.Split(v, ";") {
@@ -530,9 +587,21 @@ func (c *Config) normalizeAndValidate() error {
 		default:
 			return fmt.Errorf("tls.mode must be \"starttls\" or \"implicit\", got %q", c.TLS.Mode)
 		}
-		if c.TLS.CertFile == "" || c.TLS.KeyFile == "" {
-			return fmt.Errorf("tls requires cert_file and key_file")
+		if c.TLS.CertPEM == "" || c.TLS.KeyPEM == "" {
+			return fmt.Errorf("tls: cert_data and key_data are required (base64 of the PEM files)")
 		}
+		if _, err := tls.X509KeyPair([]byte(c.TLS.CertPEM), []byte(c.TLS.KeyPEM)); err != nil {
+			return fmt.Errorf("tls: certificate/key pair is invalid: %w", err)
+		}
+	}
+	if c.MaxMessageSize <= 0 {
+		return fmt.Errorf("max_message_size must be positive")
+	}
+	if c.MaxRecipients <= 0 {
+		return fmt.Errorf("max_recipients must be positive")
+	}
+	if c.Queue.DeadMax < 0 {
+		return fmt.Errorf("queue.dead_max must be >= 0 (0 disables the limit)")
 	}
 	switch c.Storage.Type {
 	case "", "sqlite":
@@ -555,15 +624,6 @@ func (c *Config) normalizeAndValidate() error {
 		if _, _, err := net.SplitHostPort(c.API.Listen); err != nil {
 			return fmt.Errorf("invalid api.listen %q: %w", c.API.Listen, err)
 		}
-	}
-	if c.MaxMessageSize <= 0 {
-		return fmt.Errorf("max_message_size must be positive")
-	}
-	if c.MaxRecipients <= 0 {
-		return fmt.Errorf("max_recipients must be positive")
-	}
-	if c.Queue.DeadMax < 0 {
-		return fmt.Errorf("queue.dead_max must be >= 0 (0 disables the limit)")
 	}
 
 	// Normalize seed accounts (emails lowercased, last duplicate wins so env
@@ -588,12 +648,6 @@ func (c *Config) normalizeAndValidate() error {
 		}
 		if acc.Password == "" {
 			return fmt.Errorf("account %q: password must not be empty", acc.Email)
-		}
-		for _, from := range acc.AllowedFrom {
-			from = strings.ToLower(strings.TrimSpace(from))
-			if from == "" || !validEmail(from) {
-				return fmt.Errorf("account %q: invalid allowed_from %q", acc.Email, from)
-			}
 		}
 		acc.AllowedFrom = normalizeExtraAllowed(acc.AllowedFrom)
 	}

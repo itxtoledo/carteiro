@@ -35,11 +35,12 @@ type Server struct {
 	wg     sync.WaitGroup
 }
 
-// New validates the configured TLS and prepares the server.
+// New validates the configured TLS and prepares the server. Certificates
+// always come from the decoded base64 PEM texts in cfg.TLS (no files).
 func New(cfg *config.Config, store *storage.Store, log *slog.Logger, m *metrics.Metrics) (*Server, error) {
 	s := &Server{cfg: cfg, store: store, log: log, metrics: m}
 	if cfg.TLS != nil {
-		cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		cert, err := tls.X509KeyPair([]byte(cfg.TLS.CertPEM), []byte(cfg.TLS.KeyPEM))
 		if err != nil {
 			return nil, fmt.Errorf("loading TLS certificate: %w", err)
 		}

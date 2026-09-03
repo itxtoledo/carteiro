@@ -56,10 +56,15 @@ api:
 # with require_tls: false). With the block, STARTTLS is advertised and AUTH
 # can be required to use TLS (require_tls: true). For port 465 (implicit TLS)
 # use mode: "implicit".
+# In YAML the certificate and key are passed ONLY as base64 of the PEM files:
+#   CERT=$(base64 -w0 tls.crt); KEY=$(base64 -w0 tls.key)
 # tls:
-#   cert_file: "/etc/carteiro/tls.crt"
-#   key_file:  "/etc/carteiro/tls.key"
-#   mode: "starttls"   # or "implicit"
+#   mode: "starttls"     # or "implicit"
+#   cert_data: "PASTE-BASE64-OF-tls.crt"
+#   key_data: "PASTE-BASE64-OF-tls.key"
+# Certificates are base64-only: no cert_file/key_file anywhere (YAML or env).
+# Env alternative without any config file:
+#   CARTEIRO_TLS_CERT=<base64>  CARTEIRO_TLS_KEY=<base64>  CARTEIRO_TLS_MODE=starttls
 
 # --- MX delivery ------------------------------------------------------------
 delivery:

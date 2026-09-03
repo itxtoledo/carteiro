@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,22 +133,37 @@ func TestLoadRejectsBadEnvAccounts(t *testing.T) {
 	}
 }
 
-func TestEnvRequiresBothTLSFiles(t *testing.T) {
+func TestTLSModeValidation(t *testing.T) {
 	configViaEnvIsolada(t)
-	t.Setenv("CARTEIRO_ACCOUNTS", "a@x.com:p")
-	t.Setenv("CARTEIRO_TLS_CERT_FILE", "/tmp/x.crt")
-	t.Setenv("CARTEIRO_TLS_KEY_FILE", "")
-	if _, err := Load(""); err == nil {
-		t.Fatal("expected an error with only cert set")
+	cert, key := selfSignedTLS(t)
+	yaml := "tls:\n  mode: errado\n  cert_data: \"" + b64(cert) + "\"\n  key_data: \"" + b64(key) + "\"\n"
+	if _, err := Load(writeTemp(t, yaml)); err == nil {
+		t.Fatal("expected an error for an invalid tls.mode")
 	}
 }
 
-func TestTLSModeValidation(t *testing.T) {
+// TLS is base64-only: certificate files are not supported anymore.
+func TestTLSFileFieldsIgnored(t *testing.T) {
 	configViaEnvIsolada(t)
-	t.Setenv("CARTEIRO_ACCOUNTS", "a@x.com:p")
-	p := writeTemp(t, "tls:\n  cert_file: /tmp/c\n  key_file: /tmp/k\n  mode: errado\n")
-	if _, err := Load(p); err == nil {
-		t.Fatal("expected an error for an invalid tls.mode")
+	t.Setenv("CARTEIRO_TLS_CERT_FILE", "/tmp/x.crt")
+	t.Setenv("CARTEIRO_TLS_KEY_FILE", "/tmp/x.key")
+	// Only file vars => TLS stays off (files are ignored, not supported).
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TLS != nil {
+		t.Error("file-based TLS vars should be ignored")
+	}
+	cert, key := selfSignedTLS(t)
+	t.Setenv("CARTEIRO_TLS_CERT", b64(cert))
+	t.Setenv("CARTEIRO_TLS_KEY", b64(key))
+	cfg2, err := Load("")
+	if err != nil {
+		t.Fatalf("Load with base64: %v", err)
+	}
+	if cfg2.TLS == nil || cfg2.TLS.CertPEM == "" {
+		t.Error("base64 TLS vars should enable TLS")
 	}
 }
 
@@ -442,4 +459,87 @@ func TestLoadDKIMKeysInvalidEntry(t *testing.T) {
 	if _, err := Load(""); err == nil {
 		t.Fatal("expected an error for a bad key material")
 	}
+}
+
+// selfSignedTLS generates a throwaway self-signed certificate + key pair and
+// returns (certPEM, keyPEM).
+func selfSignedTLS(t *testing.T) (string, string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "localhost"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	return certPEM, keyPEM
+}
+
+func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+func TestTLSFromYAMLBase64(t *testing.T) {
+	configViaEnvIsolada(t)
+	cert, key := selfSignedTLS(t)
+	p := writeTemp(t, "tls:\n  mode: \"implicit\"\n  cert_data: \""+b64(cert)+"\"\n  key_data: \""+b64(key)+"\"\n")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TLS.Mode != "implicit" {
+		t.Errorf("mode = %q", cfg.TLS.Mode)
+	}
+	if !strings.Contains(cfg.TLS.CertPEM, "-----BEGIN CERTIFICATE-----") || !strings.Contains(cfg.TLS.KeyPEM, "-----BEGIN RSA PRIVATE KEY-----") {
+		t.Error("base64 was not decoded into PEM texts")
+	}
+}
+
+func TestTLSEnvBase64(t *testing.T) {
+	configViaEnvIsolada(t)
+	cert, key := selfSignedTLS(t)
+	t.Setenv("CARTEIRO_TLS_CERT", b64(cert))
+	t.Setenv("CARTEIRO_TLS_KEY", b64(key))
+	t.Setenv("CARTEIRO_TLS_MODE", "implicit")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TLS.Mode != "implicit" || cfg.TLS.CertPEM == "" || cfg.TLS.KeyPEM == "" {
+		t.Errorf("env tls wrong: %+v", cfg.TLS)
+	}
+}
+
+func TestTLSValidationErrors(t *testing.T) {
+	configViaEnvIsolada(t)
+	// cert_data without key_data.
+	p := writeTemp(t, "tls:\n  cert_data: \""+b64("not really")+"\"\n")
+	if _, err := Load(p); err == nil {
+		t.Fatal("expected an error for cert_data without key_data")
+	}
+	// Raw PEM (not base64) is rejected.
+	cert, key := selfSignedTLS(t)
+	p2 := writeTemp(t, "tls:\n  cert_data: \"-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\"\n  key_data: \""+b64(key)+"\"\n")
+	_ = cert
+	if _, err := Load(p2); err == nil {
+		t.Fatal("expected an error when cert_data is raw PEM instead of base64")
+	}
+	// A pair that does not match is rejected at parse time.
+	otherCert, _ := selfSignedTLS(t)
+	p3 := writeTemp(t, "tls:\n  cert_data: \""+b64(otherCert)+"\"\n  key_data: \""+b64(key)+"\"\n")
+	if _, err := Load(p3); err == nil {
+		t.Fatal("expected an error for a mismatched certificate/key pair")
+	}
+
 }

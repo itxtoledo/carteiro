@@ -26,16 +26,17 @@ memory.
 1. [How it works](#how-it-works)
 2. [Configuration](#configuration)
 3. [Seeds: first run, upserts and clear logs](#seeds-first-run-upserts-and-clear-logs)
-4. [Admin API (bearer) and monitoring](#admin-api-bearer-and-monitoring)
-5. [Ports and network](#ports-and-network)
-6. [Docker mode](#docker-mode)
-7. [Daemon mode (Linux/macOS)](#daemon-mode)
-8. [Sending with Nodemailer](#sending-with-nodemailer)
-9. [The database queue](#the-database-queue)
-10. [DNS: keeping email out of spam](#dns-keeping-email-out-of-spam)
-11. [TLS on the submission port](#tls-on-the-submission-port)
-12. [Development](#development)
-13. [Limitations](#limitations)
+4. [Keys and certificates as base64](#keys-and-certificates-as-base64)
+5. [Admin API (bearer) and monitoring](#admin-api-bearer-and-monitoring)
+6. [Ports and network](#ports-and-network)
+7. [Docker mode](#docker-mode)
+8. [Daemon mode (Linux/macOS)](#daemon-mode)
+9. [Sending with Nodemailer](#sending-with-nodemailer)
+10. [The database queue](#the-database-queue)
+11. [DNS: keeping email out of spam](#dns-keeping-email-out-of-spam)
+12. [TLS on the submission port](#tls-on-the-submission-port)
+13. [Development](#development)
+14. [Limitations](#limitations)
 
 ---
 
@@ -139,7 +140,7 @@ stays **off** until the token is configured.
 | `CARTEIRO_DELIVERY_POLL_INTERVAL` | `5s` | queue scan frequency |
 | `CARTEIRO_QUEUE_DEAD_MAX` | `1000` | max dead-letter rows kept (`0` = unlimited) |
 | `CARTEIRO_REQUIRE_TLS` | `false` | `true` requires STARTTLS before AUTH (outside loopback) |
-| `CARTEIRO_TLS_CERT_FILE` / `CARTEIRO_TLS_KEY_FILE` | — | enable TLS (cert + key, both required) |
+| `CARTEIRO_TLS_CERT` / `CARTEIRO_TLS_KEY` | — | enable TLS with base64 of the PEM cert/key (files are not supported) |
 | `CARTEIRO_TLS_MODE` | `starttls` | `starttls` (587) or `implicit` (465) |
 | `CARTEIRO_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `CARTEIRO_CONFIG` | — | path to the YAML file |
@@ -178,6 +179,52 @@ server comes up already usable.
 Multiple projects share one server: give each project its own account (and
 `allowed_from`) plus its own DKIM key per domain — see
 [Multiple projects and domains](#multiple-projects-and-domains).
+
+## Keys and certificates as base64
+
+Private keys (DKIM) and TLS certificates/keys are configured **only as
+base64**, never as filesystem paths. Base64 is just an encoding — it is not
+encryption — but it keeps each secret on a single manageable line and avoids
+mounting/reading files, which is why every config surface (YAML `key_data`,
+`CARTEIRO_DKIM_KEY/KEYS`, `CARTEIRO_TLS_CERT/KEY`) accepts it.
+
+### Generate and encode a DKIM key
+
+```bash
+# 1) generate the key pair (RSA 2048) with openssl
+openssl genrsa -out dkim.yourdomain.com.key 2048
+
+# 2) encode the PRIVATE key as base64 for the config
+KEY=$(base64 -w0 dkim.yourdomain.com.key)     # Linux
+# macOS (wraps lines; also accepted, or use -b 0):
+# KEY=$(base64 -i dkim.yourdomain.com.key | tr -d '\n')
+
+# 3) put it in the config seed or env:
+#    YAML: dkim: [{domain, selector, key_data: "$KEY"}]
+#    env:  CARTEIRO_DKIM_KEY="$KEY"   (or inside CARTEIRO_DKIM_KEYS)
+
+# 4) publish the PUBLIC part in DNS (never in the config):
+openssl rsa -in dkim.yourdomain.com.key -pubout -out dkim.pub
+grep -v -- '-----' dkim.pub | tr -d '\n'   # -> p=... for <selector>._domainkey.<domain>
+```
+
+### Generate and encode a TLS certificate/key
+
+```bash
+# self-signed cert (client trusts it only if you add it to the CA store)
+openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+  -keyout tls.key -out tls.crt \
+  -subj "/CN=smtp.yourdomain.com" \
+  -addext "subjectAltName=DNS:smtp.yourdomain.com"
+
+CERT=$(base64 -w0 tls.crt)
+KEY=$(base64 -w0 tls.key)
+# -> YAML: tls.cert_data/key_data  |  env: CARTEIRO_TLS_CERT / CARTEIRO_TLS_KEY
+```
+
+Wrapped base64 (multiple lines) is accepted too — Carteiro strips whitespace
+before decoding. Whatever you do, keep the base64 **private**: it is the key
+material; only the DNS record above is meant to be public.
 
 ---
 
@@ -275,7 +322,7 @@ Images are published automatically to **GHCR** by the
 [GitHub Actions workflow](#development) for `linux/amd64` and `linux/arm64`:
 
 ```bash
-docker pull ghcr.io/YOUR-USERNAME/carteiro:latest
+docker pull ghcr.io/itxtoledo/carteiro:latest
 ```
 
 The image is **configured entirely through environment variables**: it ships
@@ -294,7 +341,7 @@ docker run -d --name carteiro \
   -e CARTEIRO_API_TOKEN='a-long-random-token' \
   -e CARTEIRO_API_LISTEN=':9090' \   # reach the admin API from the host (loopback by default)
   -v carteiro-data:/var/lib/carteiro \
-  ghcr.io/YOUR-USERNAME/carteiro:latest
+  ghcr.io/itxtoledo/carteiro:latest
 ```
 
 Follow the logs with `docker logs -f carteiro` — you will see the seed
@@ -313,6 +360,55 @@ override it, e.g. to probe the API instead:
       retries: 3
 ```
 
+### Passing DKIM keys when running in Docker
+
+DKIM seeds are declared the same way as accounts, via environment variables.
+Use the **base64 of the private key file** (one clean line; `PEM` inline also
+works in env vars, and the API accepts PEM). Remember: the **private** key
+goes here, the **public** key goes to the DNS record
+(`<selector>._domainkey.<domain>`).
+
+```bash
+KEY=$(base64 -w0 dkim.yourdomain.com.key)   # base64 of the PRIVATE key
+
+docker run -d --name carteiro \
+  -p 587:587 \
+  -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:a-strong-password' \
+  -e CARTEIRO_DKIM_DOMAIN='yourdomain.com' \
+  -e CARTEIRO_DKIM_SELECTOR='mail' \
+  -e "CARTEIRO_DKIM_KEY=$KEY" \
+  -v carteiro-data:/var/lib/carteiro \
+  ghcr.io/itxtoledo/carteiro:latest
+```
+
+Serving **two domains** (e.g. two projects) with the relay? One variable holds
+both keys, entries separated by `;` as `domain:selector:base64`:
+
+```bash
+KEY_A=$(base64 -w0 dkim.doma.com.key); KEY_B=$(base64 -w0 dkim.domb.com.key)
+
+docker run -d --name carteiro \
+  -p 587:587 \
+  -e CARTEIRO_ACCOUNTS='a@doma.com:pass-a;b@domb.com:pass-b' \
+  -e "CARTEIRO_DKIM_KEYS=doma.com:mail:$KEY_A;domb.com:mail:$KEY_B" \
+  -v carteiro-data:/var/lib/carteiro \
+  ghcr.io/itxtoledo/carteiro:latest
+```
+
+With docker compose, put the base64 strings directly in the environment:
+
+```yaml
+    environment:
+      CARTEIRO_ACCOUNTS: "a@doma.com:pass-a;b@domb.com:pass-b"
+      # doma.com:mail:<base64>;domb.com:mail:<base64>
+      CARTEIRO_DKIM_KEYS: "doma.com:mail:QUJDREVGR0hJSktMTU5PUFE=;domb.com:mail:UkVGR0hJSktMTU5PUFFSU1Q="
+```
+
+On startup the seed logs confirm each domain, e.g.:
+`seed: doma.com -> created in the database`. To add/rotate a domain later
+without restarting, use the admin API (`POST /dkim`) instead.
+
+
 ### Persisting the SQLite database (Docker)
 
 The whole state — accounts (bcrypt hashes), DKIM keys and the message queue —
@@ -327,7 +423,7 @@ docker run -d --name carteiro \
   -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:password' \
   -e CARTEIRO_API_TOKEN='token' \
   -v carteiro-data:/var/lib/carteiro \
-  ghcr.io/YOUR-USERNAME/carteiro:latest
+  ghcr.io/itxtoledo/carteiro:latest
 
 docker volume inspect carteiro-data     # where Docker stores it on the host
 docker rm -f carteiro && docker run ... # same -v volume: data comes back
@@ -357,7 +453,7 @@ docker rm -f carteiro && docker run ... # same -v volume: data comes back
 ```yaml
 services:
   carteiro:
-    image: ghcr.io/YOUR-USERNAME/carteiro:latest
+    image: ghcr.io/itxtoledo/carteiro:latest
     restart: unless-stopped
     ports: ["587:587", "9090:9090"]
     environment:
@@ -564,14 +660,39 @@ aligned, plus **reverse DNS (PTR)** on the outbound IP. The steps below use
 
 ### 1. SPF (authorize the IP to send for your domain)
 
+SPF tells receiving servers which IP addresses are allowed to send for your
+domain. The recommended record for a dedicated relay IP is **explicit**:
+
 ```dns
 yourdomain.com.  TXT  "v=spf1 ip4:203.0.113.10 -all"
 ```
 
-If you also send over IPv6, add `ip6:`. If other legitimate services send for
-the domain, include them (`include:`), but **never** use `+all`.
+**It does not have to be an IP — it can reference a domain**, as long as that
+domain resolves to the sending IP. SPF compares the source IP of the
+connection against what the policy lists:
+
+| Mechanism | Example | Meaning |
+|---|---|---|
+| `ip4:` / `ip6:` | `v=spf1 ip4:203.0.113.10 -all` | allow that IP directly (0 DNS lookups) |
+| `a:` | `v=spf1 a:smtp.yourdomain.com -all` | allow the IP(s) of the `A` record of `smtp.yourdomain.com` |
+| `include:` | `v=spf1 include:yourdomain.com -all` | delegate to the SPF published at that domain (provider setups) |
+| `mx:` | `v=spf1 mx -all` | allow the IPs in the domain's MX records |
+
+Important rules:
+
+- A bare domain is **not valid** — always use the mechanism keyword
+  (`a:smtp.yourdomain.com`, never just `smtp.yourdomain.com`).
+- SPF allows at most **10 DNS lookups**; `ip4:` costs 0, `a:`/`include:` cost 1.
+- `ip4:` with a fixed IP is the best practice here: explicit, zero lookups,
+  no dependency on an `A` record. If your relay IP ever changes, switch to
+  `a:smtp.yourdomain.com` (with the `A` record updated) or rotate the record.
+- If you also send over IPv6, add the address with the `ip6:` mechanism, e.g.
+  `v=spf1 ip4:203.0.113.10 ip6:2001:db8::1234 -all`.
+- Other legitimate services (newsletters, transactional providers) can be
+  combined with `include:`; **never** use `+all`.
 
 Verify: `dig TXT yourdomain.com +short`
+
 
 ### 2. DKIM (signing messages)
 
@@ -647,12 +768,26 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
   -addext "subjectAltName=DNS:smtp.yourdomain.com"
 ```
 
+In YAML the certificate and key are passed **only as base64** of the PEM
+files (one line each); certificate files are not supported:
+
+```bash
+CERT=$(base64 -w0 /etc/carteiro/tls.crt)   # or tls.crt PEM
+KEY=$(base64 -w0 /etc/carteiro/tls.key)
+```
+
 ```yaml
 tls:
-  cert_file: "/etc/carteiro/tls.crt"
-  key_file:  "/etc/carteiro/tls.key"
   mode: "starttls"          # port 587 (default). For 465: "implicit"
+  cert_data: "PASTE-BASE64-OF-tls.crt"
+  key_data: "PASTE-BASE64-OF-tls.key"
 require_tls: true           # refuse AUTH without TLS outside loopback
+```
+
+Or via environment only (handy in Docker):
+
+```bash
+docker run -d -p 587:587   -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:password'   -e CARTEIRO_TLS_CERT="$CERT"   -e CARTEIRO_TLS_KEY="$KEY"   -e CARTEIRO_TLS_MODE=starttls   -e CARTEIRO_REQUIRE_TLS=true   -v carteiro-data:/var/lib/carteiro   ghcr.io/itxtoledo/carteiro:latest
 ```
 
 ---
