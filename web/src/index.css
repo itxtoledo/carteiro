@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/* Class-based dark mode: toggle `.dark` on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+}
+.dark {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-[#f2f3f3] text-slate-800 antialiased dark:bg-[#16191f] dark:text-slate-200;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+}
+
+/* AWS/GCP console feel: restrained chrome, single blue accent. Kept inside
+   @layer base so utility classes (e.g. text-white on button-like links) can
+   override it — an unlayered `a { color }` rule would win over Tailwind's
+   layered utilities and turn "Send e-mail"-style links unreadable. */
+@layer base {
+  a {
+    @apply text-[#0073bb] dark:text-[#44b9d6];
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-slate-300 dark:bg-slate-600;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
