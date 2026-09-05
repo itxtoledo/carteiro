@@ -329,13 +329,14 @@ func TestAPIValidation(t *testing.T) {
 		t.Fatalf("expected missing-token error, got %v", err)
 	}
 	// A single token defaults the listen address and is kept plain (not
-	// hashed).
+	// hashed). The default binds all interfaces (:8080) so the web panel is
+	// reachable from outside a container; the token is the only gate.
 	p2 := writeTemp(t, "api:\n  token: \"tok-1\"\n")
 	cfg, err := Load(p2)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.API.Listen != "127.0.0.1:9090" {
+	if cfg.API.Listen != ":8080" {
 		t.Errorf("default api listen = %q", cfg.API.Listen)
 	}
 	if cfg.API.Token != "tok-1" {
@@ -350,6 +351,26 @@ func TestAPIValidation(t *testing.T) {
 	}
 	if cfg2.API.Listen != "127.0.0.1:9191" || cfg2.API.Token != "env-tok" {
 		t.Errorf("env api config wrong: %+v", cfg2.API)
+	}
+	// HTTP_ADDR is an accepted alias for the panel listener (the token still
+	// comes from CARTEIRO_API_TOKEN).
+	os.Unsetenv("CARTEIRO_API_LISTEN")
+	t.Setenv("HTTP_ADDR", ":9090")
+	cfg3, err := Load("")
+	if err != nil {
+		t.Fatalf("Load (HTTP_ADDR): %v", err)
+	}
+	if cfg3.API.Listen != ":9090" || cfg3.API.Token != "env-tok" {
+		t.Errorf("HTTP_ADDR alias wrong: %+v", cfg3.API)
+	}
+	os.Unsetenv("HTTP_ADDR")
+	t.Setenv("CARTEIRO_HTTP_ADDR", ":9091")
+	cfg4, err := Load("")
+	if err != nil {
+		t.Fatalf("Load (CARTEIRO_HTTP_ADDR): %v", err)
+	}
+	if cfg4.API.Listen != ":9091" {
+		t.Errorf("CARTEIRO_HTTP_ADDR alias wrong: %+v", cfg4.API)
 	}
 }
 

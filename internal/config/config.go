@@ -428,7 +428,20 @@ func applyEnv(c *Config) error {
 			c.Accounts = append(c.Accounts, Account{Email: strings.TrimSpace(email), Password: password})
 		}
 	}
+	// The web panel + admin API listen address. CARTEIRO_API_LISTEN wins;
+	// HTTP_ADDR / CARTEIRO_HTTP_ADDR are accepted aliases for the same knob
+	// (kept for the dashboard convention of a single HTTP_ADDR variable).
 	if v := os.Getenv("CARTEIRO_API_LISTEN"); v != "" {
+		if c.API == nil {
+			c.API = &API{}
+		}
+		c.API.Listen = v
+	} else if v := os.Getenv("CARTEIRO_HTTP_ADDR"); v != "" {
+		if c.API == nil {
+			c.API = &API{}
+		}
+		c.API.Listen = v
+	} else if v := os.Getenv("HTTP_ADDR"); v != "" {
 		if c.API == nil {
 			c.API = &API{}
 		}
@@ -542,7 +555,9 @@ func (c *Config) normalizeAndValidate() error {
 		}
 		c.API.Token = strings.TrimSpace(c.API.Token)
 		if strings.TrimSpace(c.API.Listen) == "" {
-			c.API.Listen = "127.0.0.1:9090"
+			// The dashboard + admin API share this listener; :8080 binds all
+			// interfaces so the panel is reachable from outside a container.
+			c.API.Listen = ":8080"
 		}
 		if _, _, err := net.SplitHostPort(c.API.Listen); err != nil {
 			return fmt.Errorf("invalid api.listen %q: %w", c.API.Listen, err)

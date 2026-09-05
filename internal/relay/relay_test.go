@@ -142,7 +142,7 @@ func testDeliverer(t *testing.T, maxAttempts int) (*Deliverer, *storage.Store) {
 		},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	d, err := New(cfg, store, logger, &metrics.Metrics{})
+	d, err := New(cfg, store, logger, &metrics.Metrics{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
