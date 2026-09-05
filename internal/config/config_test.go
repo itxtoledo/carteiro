@@ -616,3 +616,44 @@ func TestBarePortListenIsNormalized(t *testing.T) {
 		t.Errorf("bare web port via HTTP_ADDR = %q", cfg4.Web.Listen)
 	}
 }
+
+func TestACMEConfigAndValidation(t *testing.T) {
+	configViaEnvIsolada(t)
+	// Enabled without an email is rejected.
+	t.Setenv("CARTEIRO_HOSTNAME", "smtp.example.com")
+	t.Setenv("CARTEIRO_ACME", "true")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "email") {
+		t.Fatalf("expected missing-email error, got %v", err)
+	}
+	// Hostname must be a domain, not an IP.
+	t.Setenv("CARTEIRO_ACME_EMAIL", "ops@example.com")
+	t.Setenv("CARTEIRO_HOSTNAME", "127.0.0.1")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "hostname") {
+		t.Fatalf("expected hostname error, got %v", err)
+	}
+	t.Setenv("CARTEIRO_HOSTNAME", "smtp.example.com")
+
+	// Defaults: provider http01, challenge listener :80.
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.ACME.Enabled || cfg.ACME.Provider != "http01" || cfg.ACME.HTTPAddr != ":80" {
+		t.Errorf("acme defaults wrong: %+v", cfg.ACME)
+	}
+	// Provider override and a bare HTTP port number.
+	t.Setenv("CARTEIRO_ACME_PROVIDER", "cloudflare")
+	t.Setenv("CARTEIRO_ACME_HTTP_ADDR", "8080")
+	cfg2, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.ACME.Provider != "cloudflare" || cfg2.ACME.HTTPAddr != ":8080" {
+		t.Errorf("acme env overrides wrong: %+v", cfg2.ACME)
+	}
+	// Invalid provider rejected.
+	t.Setenv("CARTEIRO_ACME_PROVIDER", "nonsense")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("expected provider error, got %v", err)
+	}
+}

@@ -145,6 +145,11 @@ stays **off** until the token is configured.
 | `CARTEIRO_TLS_CERT` / `CARTEIRO_TLS_KEY` | — | enable TLS with base64 of the PEM cert/key (files are not supported) |
 | `CARTEIRO_TLS_MODE` | `starttls` | `starttls` (587) or `implicit` (465) |
 | `CARTEIRO_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `CARTEIRO_ACME` | `false` | manage a Let's Encrypt certificate for the SMTP listener in-process (off = proxy/base64 TLS handles it) |
+| `CARTEIRO_ACME_EMAIL` | — | registration e-mail (required when ACME is on) |
+| `CARTEIRO_ACME_PROVIDER` | `http01` | challenge: `http01` (needs port 80 reachable) or `cloudflare` (DNS-01, needs `CF_DNS_API_TOKEN`) |
+| `CARTEIRO_ACME_HTTP_ADDR` | `:80` | listener for the http-01 challenge |
+| `CARTEIRO_ACME_STAGING` | `false` | `true` = Let's Encrypt staging (test before going live) |
 | `CARTEIRO_LOG_MASK_EMAILS` | `true` | e-mails are masked in the logs (`joao@example.com` → `j***@e***.com`); set `false` to log full addresses (debugging only) |
 | `CARTEIRO_CONFIG` | — | path to the YAML file |
 
@@ -878,6 +883,8 @@ yourdomain.com.  MX  10 smtp.yourdomain.com.
 
 ## TLS on the submission port
 
+### Option A — fixed certificate (base64)
+
 ```bash
 openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
   -keyout /etc/carteiro/tls.key -out /etc/carteiro/tls.crt \
@@ -906,6 +913,39 @@ Or via environment only (handy in Docker):
 ```bash
 docker run -d -p 587:587   -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:password'   -e CARTEIRO_TLS_CERT="$CERT"   -e CARTEIRO_TLS_KEY="$KEY"   -e CARTEIRO_TLS_MODE=starttls   -e CARTEIRO_REQUIRE_TLS=true   -v carteiro-data:/var/lib/carteiro   ghcr.io/itxtoledo/carteiro:latest
 ```
+
+### Option B — managed Let's Encrypt (ACME, lego)
+
+Instead of pasting a certificate, Carteiro can **obtain and renew its own**
+Let's Encrypt certificate for the SMTP hostname (`CARTEIRO_HOSTNAME`). The
+registration and the current certificate are stored in the database and the
+listener resolves the certificate **dynamically**, so renewals never require a
+restart or a redeploy.
+
+Enable it with `CARTEIRO_ACME=true` (or the CLI flag `-acme`, which overrides
+the environment):
+
+```bash
+# http-01 challenge (default): port 80 must be reachable from the internet
+CARTEIRO_ACME=true
+CARTEIRO_ACME_EMAIL=you@example.com          # ACME registration
+CARTEIRO_HOSTNAME=smtp.example.com           # public name of the relay
+
+# or DNS-01 via Cloudflare (no open port needed; requires a DNS Edit token)
+CARTEIRO_ACME_PROVIDER=cloudflare
+CF_DNS_API_TOKEN=...                          # lego reads this standard var
+```
+
+The YAML equivalent is `acme.enabled/email/provider/http_addr/staging`, and
+`CARTEIRO_ACME_STAGING=true` points at the Let's Encrypt staging directory for
+tests (certificates there are not trusted by clients). Do not configure
+`tls.cert_data/key_data` at the same time: managed mode ignores them.
+
+> **Running behind a proxy?** Leave ACME off (the default). A proxy in front
+> (Coolify/Traefik, another MTA, a load balancer) keeps terminating TLS and
+> Carteiro serves plaintext or with the base64 certificate from Option A. The
+> toggle exists exactly so both setups live in the same binary: `false` = the
+> proxy owns the certificate, `true` = Carteiro owns it.
 
 ---
 

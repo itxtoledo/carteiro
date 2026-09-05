@@ -34,6 +34,7 @@ internal/relay/       MX delivery worker (retry/backoff, dead-letter)
 internal/dkim/        DKIM signing (RSA/Ed25519 via go-msgauth)
 internal/api/         web server: admin REST API + dashboard routes (bearer),
                       openapi.json, SPA mount
+internal/acme/        managed Let's Encrypt TLS (lego): obtain/renew, dynamic cert
 internal/sends/       recent-sends ring buffer + RFC 5322 build/parse helpers
 internal/webui/       embedded SPA handler over web/dist (go:embed)
 internal/metrics/     atomic Prometheus counters
@@ -93,6 +94,15 @@ Key rules (validated in `config.normalizeAndValidate`):
   accept a bare port (`8080`), normalized to `:8080` by
   `config.normalizeListen`. `CARTEIRO_WEB_LISTEN`/`HTTP_ADDR` configure the
   PANEL; `CARTEIRO_API_LISTEN` configures the API.
+- **Managed TLS (ACME)** (`CARTEIRO_ACME=true` or `-acme` flag, off by
+  default): `internal/acme` uses lego to obtain/renew a Let's Encrypt
+  certificate for `CARTEIRO_HOSTNAME` (challenge `http01` on
+  `CARTEIRO_ACME_HTTP_ADDR`/`:80`, or `cloudflare` DNS-01 reading the lego
+  standard `CF_DNS_API_TOKEN`); the account and certificate persist in the
+  DB (`acme_account`, `managed_cert`, single-row) and the SMTP listener
+  serves them dynamically through `smtpd.UseManagedTLS` (no restart on
+  renewal). Enabled ignores `tls.cert_data/key_data`. Keep it off when a
+  proxy in front terminates TLS.
 - Listen addresses (`listen`, `api.listen`, `CARTEIRO_LISTEN`,
   `CARTEIRO_API_LISTEN`/`HTTP_ADDR`) accept a bare port (`8080`), which
   `config.normalizeListen` rewrites to `:8080`; validate with host:port.

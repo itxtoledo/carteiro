@@ -29,6 +29,8 @@ type Server struct {
 	metrics *metrics.Metrics
 	rec     *sends.Recorder
 	tlsCfg  *tls.Config
+	// tlsMode is "starttls" or "implicit"; only meaningful when tlsCfg is set.
+	tlsMode string
 
 	ln net.Listener
 
@@ -44,6 +46,10 @@ type Server struct {
 func New(cfg *config.Config, store *storage.Store, log *slog.Logger, m *metrics.Metrics, rec *sends.Recorder) (*Server, error) {
 	s := &Server{cfg: cfg, store: store, log: log, metrics: m, rec: rec}
 	if cfg.TLS != nil {
+		s.tlsMode = cfg.TLS.Mode
+		if s.tlsMode == "" {
+			s.tlsMode = "starttls"
+		}
 		cert, err := tls.X509KeyPair([]byte(cfg.TLS.CertPEM), []byte(cfg.TLS.KeyPEM))
 		if err != nil {
 			return nil, fmt.Errorf("loading TLS certificate: %w", err)
@@ -56,6 +62,22 @@ func New(cfg *config.Config, store *storage.Store, log *slog.Logger, m *metrics.
 	return s, nil
 }
 
+// UseManagedTLS switches the listener to a certificate that changes at
+// runtime (the ACME manager): every handshake resolves the current
+// certificate through getCert, so renewals never need a restart. mode is
+// "starttls" (default) or "implicit".
+func (s *Server) UseManagedTLS(mode string, getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)) {
+	if mode == "" {
+		mode = "starttls"
+	}
+	s.tlsMode = mode
+	s.tlsCfg = &tls.Config{
+		MinVersion:     tls.VersionTLS12,
+		GetCertificate: getCert,
+	}
+	s.log.Info("smtp tls: using a dynamically managed certificate", "mode", mode)
+}
+
 // Serve opens the listener and serves until the context is cancelled or
 // Shutdown is called.
 func (s *Server) Serve(ctx context.Context) error {
@@ -66,7 +88,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	mode := "no TLS"
 	if s.tlsCfg != nil {
 		mode = "starttls"
-		if s.cfg.TLS.Mode == "implicit" {
+		if s.tlsMode == "implicit" {
 			mode = "implicit"
 		}
 	}

@@ -84,6 +84,19 @@ web:
 # Env alternative without any config file:
 #   CARTEIRO_TLS_CERT=<base64>  CARTEIRO_TLS_KEY=<base64>  CARTEIRO_TLS_MODE=starttls
 
+# --- Managed TLS: Let's Encrypt (optional) ----------------------------------
+# Instead of the base64 tls.* block above, Carteiro can obtain and renew its
+# own certificate for CARTEIRO_HOSTNAME (lego). Keep DISABLED when a proxy in
+# front owns the certificate. Env: CARTEIRO_ACME=true, CARTEIRO_ACME_EMAIL,
+# CARTEIRO_ACME_PROVIDER (http01|cloudflare), CARTEIRO_ACME_HTTP_ADDR,
+# CARTEIRO_ACME_STAGING. CLI flag: -acme (overrides the env boolean).
+# acme:
+#   enabled: true
+#   email: "you@example.com"
+#   provider: "http01"    # or "cloudflare" (DNS-01, needs CF_DNS_API_TOKEN)
+#   http_addr: ":80"
+#   staging: false
+
 # --- MX delivery ------------------------------------------------------------
 delivery:
   # Timeout for opening the TCP connection to the MX.

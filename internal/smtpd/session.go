@@ -54,7 +54,7 @@ func (s *Server) serveConn(conn net.Conn) {
 		remote: remoteString(conn.RemoteAddr()),
 	}
 
-	if s.tlsCfg != nil && s.cfg.TLS.Mode == "implicit" {
+	if s.tlsCfg != nil && s.tlsMode == "implicit" {
 		tlsConn := tls.Server(conn, s.tlsCfg)
 		conn.SetDeadline(time.Now().Add(handshakeTmo))
 		if err := tlsConn.Handshake(); err != nil {
@@ -175,7 +175,7 @@ func (c *smtpConn) sendEhlo() {
 		"250-8BITMIME",
 		fmt.Sprintf("250-SIZE %d", s.cfg.MaxMessageSize),
 	}
-	if s.tlsCfg != nil && s.cfg.TLS.Mode == "starttls" && !c.tlsOn {
+	if s.tlsCfg != nil && s.tlsMode == "starttls" && !c.tlsOn {
 		lines = append(lines, "250-STARTTLS")
 	}
 	if c.authAllowed() {
@@ -189,7 +189,7 @@ func (c *smtpConn) sendEhlo() {
 
 func (c *smtpConn) handleStartTLS() {
 	s := c.s
-	if s.tlsCfg == nil || s.cfg.TLS.Mode != "starttls" {
+	if s.tlsCfg == nil || s.tlsMode != "starttls" {
 		c.reply(502, "5.5.1 STARTTLS not available")
 		return
 	}
