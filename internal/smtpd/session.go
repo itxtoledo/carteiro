@@ -333,12 +333,14 @@ func (c *smtpConn) tryAuthenticate(login, password string) {
 	}
 	if !ok || !storage.VerifyPassword(acc.PasswordHash, password) {
 		c.s.metrics.AuthFailure.Add(1)
+		_ = c.s.store.AddCounter("auth_failure", 1)
 		c.failAuth(login)
 		return
 	}
 	c.user = &acc
 	c.reset(false)
 	c.s.metrics.AuthSuccess.Add(1)
+	_ = c.s.store.AddCounter("auth_success", 1)
 	c.s.log.Info("authenticated", "conn", c.id, "remote", c.remote, "user", acc.Email, "tls", c.tlsOn)
 	c.reply(235, "2.7.0 Authentication successful")
 }
@@ -450,6 +452,7 @@ func (c *smtpConn) handleData() {
 		return
 	}
 	s.metrics.MessagesQueued.Add(1)
+	_ = s.store.AddCounter("messages_queued", 1)
 	c.s.log.Info("message queued",
 		"conn", c.id, "remote", c.remote, "user", c.user.Email,
 		"from", c.from, "to", c.rcpts, "id", id, "bytes", len(data))

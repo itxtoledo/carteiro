@@ -179,7 +179,15 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "# HELP carteiro_queue_due Messages currently due for delivery.\n# TYPE carteiro_queue_due gauge\ncarteiro_queue_due %d\n", st.Due)
 		fmt.Fprintf(w, "# HELP carteiro_queue_dead Messages in dead-letter.\n# TYPE carteiro_queue_dead gauge\ncarteiro_queue_dead %d\n", st.Dead)
 	}
-	s.metrics.WritePrometheus(w)
+	// Lifetime counters (persisted), exposed with the same metric names.
+	counters, err := s.store.GetCounters()
+	if err == nil {
+		for _, name := range []string{"auth_success", "auth_failure", "messages_queued",
+			"delivery_attempts", "messages_delivered", "messages_dead", "messages_requeued"} {
+			fmt.Fprintf(w, "# HELP carteiro_%s_total Lifetime %s events.\n# TYPE carteiro_%s_total counter\ncarteiro_%s_total %d\n",
+				name, name, name, name, counters[name])
+		}
+	}
 }
 
 // statsResponse is the dashboard summary: process counters, queue gauges and
@@ -197,17 +205,24 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Counters are lifetime totals persisted in stats_counters, so they
+	// survive restarts.
+	counters, err := s.store.GetCounters()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, statsResponse{
 		Version:       s.version,
 		UptimeSeconds: int64(time.Since(s.started).Seconds()),
 		Counters: map[string]int{
-			"auth_success_total":       int(s.metrics.AuthSuccess.Load()),
-			"auth_failure_total":       int(s.metrics.AuthFailure.Load()),
-			"messages_queued_total":    int(s.metrics.MessagesQueued.Load()),
-			"delivery_attempts_total":  int(s.metrics.DeliveryAttempts.Load()),
-			"messages_delivered_total": int(s.metrics.MessagesDelivered.Load()),
-			"messages_dead_total":      int(s.metrics.MessagesDead.Load()),
-			"messages_requeued_total":  int(s.metrics.Requeued.Load()),
+			"auth_success_total":       int(counters["auth_success"]),
+			"auth_failure_total":       int(counters["auth_failure"]),
+			"messages_queued_total":    int(counters["messages_queued"]),
+			"delivery_attempts_total":  int(counters["delivery_attempts"]),
+			"messages_delivered_total": int(counters["messages_delivered"]),
+			"messages_dead_total":      int(counters["messages_dead"]),
+			"messages_requeued_total":  int(counters["messages_requeued"]),
 		},
 		Queue: st,
 	})
@@ -456,6 +471,7 @@ func (s *Server) handleRequeue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.metrics.Requeued.Add(1)
+	_ = s.store.AddCounter("messages_requeued", 1)
 	if s.rec != nil {
 		s.rec.MarkQueued(id)
 	}
@@ -575,6 +591,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.metrics.MessagesQueued.Add(1)
+	_ = s.store.AddCounter("messages_queued", 1)
 	s.log.Info("api: message composed and queued", "id", qid, "from", req.From, "to", to, "bytes", len(msg))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": qid, "status": sends.StatusQueued})
 }

@@ -141,6 +141,7 @@ stays **off** until the token is configured.
 | `CARTEIRO_DELIVERY_IO_TIMEOUT` | `2m` | per-MX exchange timeout |
 | `CARTEIRO_DELIVERY_POLL_INTERVAL` | `5s` | queue scan frequency |
 | `CARTEIRO_QUEUE_DEAD_MAX` | `1000` | max dead-letter rows kept (`0` = unlimited) |
+| `CARTEIRO_SENDS_RETENTION_DAYS` | `30` | how long the panel keeps the send history (bodies); `0` = keep forever (lifetime counters are never pruned) | max dead-letter rows kept (`0` = unlimited) |
 | `CARTEIRO_REQUIRE_TLS` | `false` | `true` requires STARTTLS before AUTH (outside loopback) |
 | `CARTEIRO_TLS_CERT` / `CARTEIRO_TLS_KEY` | — | enable TLS with base64 of the PEM cert/key (files are not supported) |
 | `CARTEIRO_TLS_MODE` | `starttls` | `starttls` (587) or `implicit` (465) |
@@ -266,7 +267,7 @@ configured. Every call except `/health` and `/metrics` needs
 | `GET /api/queue?status=dead` | list queued/dead messages (no bodies) |
 | `POST /api/queue/{id}/retry` | move a dead message back to the queue (attempts reset) |
 | `GET /api/stats` | dashboard summary: counters + queue gauges + version/uptime |
-| `GET /api/sends?limit=N` | recent sends (ring buffer): subject, status, attempts |
+| `GET /api/sends?limit=N` | recent sends (persistent history): subject, status, attempts |
 | `GET /api/sends/{id}` | one send with rendered `html`/`text` + raw source |
 | `POST /api/send` | compose and queue `{"from","to":[],"subject","text","html"}` → 201 |
 | `GET /api/openapi.json` | OpenAPI 3 document (no auth) — point Swagger UI at it |
@@ -280,8 +281,8 @@ configured. Every call except `/health` and `/metrics` needs
 > respect the same sender rules as SMTP (the `from` must belong to an account
 > or its `allowed_from`) and land in the same queue, so delivery, DKIM
 > signing and retries behave identically. Recent-sends tracking is an
-> in-memory ring (200 messages, body capped); it resets on restart and never
-> stores credentials.
+> persistent `sends_log` table (bodies capped to keep the DB lean): history
+> survives restarts and never stores credentials.
 
 ```bash
 TOKEN="a-long-random-token"

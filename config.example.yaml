@@ -96,6 +96,12 @@ delivery:
   retry_max: 4h
   # Maximum number of attempts before moving to dead-letter.
   max_attempts: 10
+
+# --- Panel history retention ------------------------------------------------
+# How many days the web panel keeps the send history (sends_log, including
+# renderable bodies). 0 keeps everything forever. Lifetime statistics are
+# never pruned. Env: CARTEIRO_SENDS_RETENTION_DAYS
+send_history_days: 30
   # How often the queue is scanned.
   poll_interval: 5s
   # Concurrent deliveries.

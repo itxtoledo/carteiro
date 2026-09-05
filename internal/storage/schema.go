@@ -57,6 +57,39 @@ var migrations = []string{
 		permanent_json TEXT NOT NULL DEFAULT '{}'
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_queue_status_next ON queue_messages(status, next_attempt)`,
+	// Persistent send history for the web panel: one row per accepted
+	// message, appended at queue time and updated as delivery progresses
+	// (survives restarts, unlike the old in-memory ring).
+	`CREATE TABLE IF NOT EXISTS sends_log (
+		id          TEXT PRIMARY KEY,
+		sender      TEXT NOT NULL,
+		to_json     TEXT NOT NULL,
+		subject     TEXT NOT NULL DEFAULT '',
+		status      TEXT NOT NULL DEFAULT 'queued',
+		attempts    INTEGER NOT NULL DEFAULT 0,
+		size        INTEGER NOT NULL DEFAULT 0,
+		truncated   INTEGER NOT NULL DEFAULT 0,
+		last_error  TEXT NOT NULL DEFAULT '',
+		html        TEXT NOT NULL DEFAULT '',
+		text        TEXT NOT NULL DEFAULT '',
+		raw         TEXT NOT NULL DEFAULT '',
+		queued_at   INTEGER NOT NULL,
+		updated_at  INTEGER NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_sends_log_queued ON sends_log(queued_at DESC)`,
+	// Lifetime relay counters (single row): totals survive restarts and are
+	// independent of the sends_log retention window.
+	`CREATE TABLE IF NOT EXISTS stats_counters (
+		id                 INTEGER PRIMARY KEY CHECK (id = 1),
+		auth_success       INTEGER NOT NULL DEFAULT 0,
+		auth_failure       INTEGER NOT NULL DEFAULT 0,
+		messages_queued    INTEGER NOT NULL DEFAULT 0,
+		delivery_attempts  INTEGER NOT NULL DEFAULT 0,
+		messages_delivered INTEGER NOT NULL DEFAULT 0,
+		messages_dead      INTEGER NOT NULL DEFAULT 0,
+		messages_requeued  INTEGER NOT NULL DEFAULT 0,
+		updated_at         INTEGER NOT NULL
+	)`,
 }
 
 func (s *Store) migrate() error {

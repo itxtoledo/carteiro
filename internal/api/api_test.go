@@ -291,7 +291,7 @@ func TestComposeSendFlow(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rec := sends.New(20, 1<<20)
+	rec := sends.New(store, 1<<20)
 	cfg := &config.API{Listen: "127.0.0.1:9090", Token: "tok"}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := New(cfg, store, logger, &metrics.Metrics{}, rec, "test", 0, 0)

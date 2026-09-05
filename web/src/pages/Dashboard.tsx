@@ -78,15 +78,15 @@ export function DashboardPage() {
         <StatCard label="Delivered" value={c.messages_delivered_total ?? 0} tone="ok" hint="total" />
         <StatCard label="Queued" value={q.queued} tone="accent" hint={`${q.due} due now`} />
         <StatCard label="Dead letter" value={q.dead} tone={q.dead > 0 ? "bad" : "default"} hint="awaiting review" />
-        <StatCard label="Accepted" value={c.messages_queued_total ?? 0} hint="since start" />
-        <StatCard label="Auth ok / fail" value={`${c.auth_success_total ?? 0} / ${c.auth_failure_total ?? 0}`} hint="SMTP logins" />
-        <StatCard label="Attempts" value={c.delivery_attempts_total ?? 0} hint="toward MX" />
+        <StatCard label="Accepted" value={c.messages_queued_total ?? 0} hint="all time (persisted)" />
+        <StatCard label="Auth ok / fail" value={`${c.auth_success_total ?? 0} / ${c.auth_failure_total ?? 0}`} hint="SMTP logins (persisted)" />
+        <StatCard label="Attempts" value={c.delivery_attempts_total ?? 0} hint="toward MX (persisted)" />
       </div>
 
       <Card>
         <CardHeader
           title="Recent activity"
-          subtitle="Last messages seen by the relay (in-memory ring)"
+          subtitle="Most recent messages (persistent history)"
           right={
             <Link to="/sends" className="text-xs font-medium text-[#0073bb] hover:underline dark:text-[#44b9d6]">
               View all →

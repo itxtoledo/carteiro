@@ -210,7 +210,7 @@ export function SendsPage() {
       <Card>
         <CardHeader
           title="Sends"
-          subtitle="Recent messages recorded by the relay — the ring resets on restart; the database queue is the source of truth."
+          subtitle="Persistent history of every message recorded by the relay — survives restarts."
           right={
             <div className="flex gap-1 rounded border border-slate-200 p-0.5 dark:border-slate-700">
               {(["all", "queued", "delivered", "dead"] as StatusFilter[]).map((f) => (

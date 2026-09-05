@@ -76,7 +76,7 @@ func run() error {
 	// rec powers the web panel's recent-sends feed (list, rendered bodies and
 	// live delivery status). It is an in-memory ring: the database queue
 	// remains the source of truth for delivery.
-	rec := sends.New(200, 512<<10)
+	rec := sends.New(store, 512<<10)
 	server, err := smtpd.New(cfg, store, logger, counters, rec)
 	if err != nil {
 		return err
@@ -131,6 +131,32 @@ func run() error {
 
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	go deliverer.Run(workerCtx)
+
+	// Send-history retention: prune rows older than the configured window on
+	// startup and hourly. Lifetime counters are not affected by pruning.
+	if cfg.SendHistoryDays > 0 {
+		if n, err := store.PruneSendLogs(cfg.SendHistoryDays); err != nil {
+			logger.Warn("send-history prune failed on startup", "err", err)
+		} else if n > 0 {
+			logger.Info("send-history prune", "removed", n, "retention_days", cfg.SendHistoryDays)
+		}
+		go func() {
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if n, err := store.PruneSendLogs(cfg.SendHistoryDays); err != nil {
+						logger.Warn("send-history prune failed", "err", err)
+					} else if n > 0 {
+						logger.Info("send-history prune", "removed", n, "retention_days", cfg.SendHistoryDays)
+					}
+				}
+			}
+		}()
+	}
 
 	select {
 	case err := <-serveErr:
