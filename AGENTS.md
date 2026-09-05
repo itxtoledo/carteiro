@@ -87,10 +87,15 @@ Key rules (validated in `config.normalizeAndValidate`):
   anywhere; leftover file env vars are ignored. Pair is validated with
   `tls.X509KeyPair` at load.
 - **API token is a single plain-text token** (`api.token` /
-  `CARTEIRO_API_TOKEN`), never stored in the DB. Web panel + API off without
-  it; default listen `:8080` (binds all interfaces — the token is the gate;
-  `CARTEIRO_API_LISTEN` wins over the `HTTP_ADDR`/`CARTEIRO_HTTP_ADDR`
-  aliases).
+  `CARTEIRO_API_TOKEN`), never stored in the DB. Admin API + web panel are
+  off without it. API listen defaults to loopback `127.0.0.1:9090`; the web
+  panel (enabled whenever the API is) defaults to `:8080`. Listen values
+  accept a bare port (`8080`), normalized to `:8080` by
+  `config.normalizeListen`. `CARTEIRO_WEB_LISTEN`/`HTTP_ADDR` configure the
+  PANEL; `CARTEIRO_API_LISTEN` configures the API.
+- Listen addresses (`listen`, `api.listen`, `CARTEIRO_LISTEN`,
+  `CARTEIRO_API_LISTEN`/`HTTP_ADDR`) accept a bare port (`8080`), which
+  `config.normalizeListen` rewrites to `:8080`; validate with host:port.
 - Delivery/queue tunables exist in YAML and env: `CARTEIRO_DELIVERY_*`
   (connect/io timeouts, retry base/max, max attempts, poll interval,
   concurrency) and `CARTEIRO_QUEUE_DEAD_MAX` (`queue.dead_max`, default 1000,
@@ -163,10 +168,14 @@ them.
 
 ## Web server: API, dashboard endpoints, SPA
 
-- One listener (`api.listen`) serves the API and the embedded React panel.
-  Routes are registered from a single table in `api.registerRoutes` (call it
-  with prefix "" + legacy=true for the root aliases and with "/api" +
-  legacy=false for the canonical set). The root alias exists ONLY for
+- TWO HTTP listeners share the binary: the admin API (`api.listen`, loopback
+  `127.0.0.1:9090` default) and the web panel (`web.listen`, `:8080` default;
+  env `CARTEIRO_WEB_LISTEN`/`HTTP_ADDR`). `api.NewPanel` serves the SPA on the
+  web port and proxies `/api/*` to the API listener in-process
+  (`api.APITargetURL` derives the target); the API listener is API-only and
+  never returns the SPA. Routes are registered from a single table in
+  `api.registerRoutes` (call it with prefix "" + legacy=true for the root
+  aliases and with "/api" + legacy=false for the canonical set). The root alias exists ONLY for
   pre-dashboard paths that are not React pages (`/health`, `/metrics`,
   `/openapi.json`, `/dkim`, `/queue`); `/accounts` and the dashboard
   endpoints are `/api`-only because their root paths (`/accounts`, `/sends`,
@@ -207,7 +216,7 @@ them.
   `web/fs.go` + the UI `dist` before compiling, `alpine:3.20` runtime with
   ca-certificates/tzdata/busybox-extras (for the `nc` healthcheck), runs
   **as root** (binds 587 < 1024 and writes volumes), `HEALTHCHECK` = TCP
-  probe on 587, `EXPOSE 587 8080`. No inline comments after EXPOSE (Apple's
+  probe on 587, `EXPOSE 587 8080 9090`. No inline comments after EXPOSE (Apple's
   builder rejects them).
 - Image: `ghcr.io/itxtoledo/carteiro`. One workflow
   (`.github/workflows/release.yml`) per `v*` tag: multi-arch image

@@ -50,17 +50,24 @@ storage:
   # MySQL connection string (used when type: mysql). Empty for sqlite.
   dsn: ""
 
-# --- Web panel + Admin API (bearer tokens, dashboard) ------------------------
-# Optional. Serves the embedded React dashboard (SPA at /) and the admin API
-# on ONE listener. The single token is plain text here (or CARTEIRO_API_TOKEN)
-# and is the ONLY place it exists: it is never stored in the database - only
-# the server owner sees the config. Without the token the server stays off.
-# The panel and every /api/* call (except /health, /metrics, /openapi.json)
-# require "Authorization: Bearer <token>".
+# --- Admin API (bearer tokens) + Web dashboard ------------------------------
+# Optional. The ADMIN API and the WEB DASHBOARD listen on SEPARATE ports, and
+# both are served by the one binary. The single token is plain text here (or
+# CARTEIRO_API_TOKEN) and is the ONLY place it exists: it is never stored in
+# the database - only the server owner sees the config. Without the token
+# both servers stay off.
 api:
-  listen: ":8080"          # default :8080; env alias: CARTEIRO_API_LISTEN,
-                           # HTTP_ADDR or CARTEIRO_HTTP_ADDR
+  # Admin REST API: /api/* plus legacy /health, /metrics, /openapi.json,
+  # /dkim, /queue. Loopback by default; the web panel proxies /api to it
+  # inside the process. A bare port like "9090" is also accepted.
+  listen: "127.0.0.1:9090"
   token: "CHANGE-ME-a-long-random-token"
+web:
+  # Dashboard (React SPA). Binds all interfaces so it is reachable from
+  # outside a container; every /api/* request is proxied to api.listen.
+  # Bare ports accepted. Env aliases: CARTEIRO_WEB_LISTEN, HTTP_ADDR,
+  # CARTEIRO_HTTP_ADDR.
+  listen: ":8080"
 
 # --- Optional TLS -----------------------------------------------------------
 # Without this block the server runs without TLS (use behind VPN/loopback or

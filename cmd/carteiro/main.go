@@ -95,7 +95,8 @@ func run() error {
 		"log_level", cfg.LogLevel,
 	)
 	if cfg.API != nil {
-		logger.Info("web panel and admin api enabled", "listen", cfg.API.Listen)
+		logger.Info("admin api enabled", "listen", cfg.API.Listen)
+		logger.Info("web panel enabled", "listen", cfg.Web.Listen, "api_proxy", api.APITargetURL(cfg.API.Listen))
 	}
 	if cfg.InsecureAuthMsg != "" {
 		logger.Warn(cfg.InsecureAuthMsg)
@@ -104,17 +105,26 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	serveErr := make(chan error, 2)
+	serveErr := make(chan error, 3)
 	go func() {
 		serveErr <- server.Serve(ctx)
 	}()
 
 	var apiServer *api.Server
+	var panel *api.Panel
 	if cfg.API != nil {
 		apiServer = api.New(cfg.API, store, logger, counters, rec, version, cfg.MaxMessageSize, cfg.MaxRecipients)
 		go func() {
 			if err := apiServer.Serve(); err != nil {
-				serveErr <- fmt.Errorf("web panel and admin api: %w", err)
+				serveErr <- fmt.Errorf("admin api: %w", err)
+			}
+		}()
+		// The web panel runs on its own listener (cfg.Web.Listen) and proxies
+		// /api/* to the admin API listener above.
+		panel = api.NewPanel(cfg.Web.Listen, api.APITargetURL(cfg.API.Listen), logger)
+		go func() {
+			if err := panel.Serve(); err != nil {
+				serveErr <- fmt.Errorf("web panel: %w", err)
 			}
 		}()
 	}
@@ -135,6 +145,9 @@ func run() error {
 	cancelWorker()
 	if apiServer != nil {
 		apiServer.Shutdown(10 * time.Second)
+	}
+	if panel != nil {
+		panel.Shutdown(10 * time.Second)
 	}
 	server.Shutdown(10 * time.Second)
 
