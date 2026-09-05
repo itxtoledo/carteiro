@@ -184,6 +184,7 @@ func (d *Deliverer) deliver(m *storage.Message) {
 		return
 	}
 	d.metrics.MessagesDelivered.Add(1)
+	_ = d.store.AddCounter("messages_delivered", 1)
 	d.log.Info("message delivered", "id", id, "duration", time.Since(start).Round(time.Millisecond))
 }
 
@@ -194,6 +195,7 @@ func (d *Deliverer) deadLetter(id, reason string) {
 	}
 	d.rec.MarkDead(id, reason)
 	d.metrics.MessagesDead.Add(1)
+	_ = d.store.AddCounter("messages_dead", 1)
 }
 
 // prepareBody normalizes the message to CRLF and applies the DKIM signature of
@@ -229,6 +231,7 @@ func (d *Deliverer) prepareBody(m *storage.Message) ([]byte, error) {
 // transient failures (4xx/network).
 func (d *Deliverer) deliverGroup(domain string, rcpts []string, from string, body []byte) ([]string, map[string]string, error) {
 	d.metrics.DeliveryAttempts.Add(1)
+	_ = d.store.AddCounter("delivery_attempts", 1)
 	perm := map[string]string{}
 
 	host, err := d.resolveHost(domain)

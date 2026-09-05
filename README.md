@@ -141,6 +141,7 @@ stays **off** until the token is configured.
 | `CARTEIRO_DELIVERY_IO_TIMEOUT` | `2m` | per-MX exchange timeout |
 | `CARTEIRO_DELIVERY_POLL_INTERVAL` | `5s` | queue scan frequency |
 | `CARTEIRO_QUEUE_DEAD_MAX` | `1000` | max dead-letter rows kept (`0` = unlimited) |
+| `CARTEIRO_SENDS_RETENTION_DAYS` | `30` | how long the panel keeps the send history (bodies); `0` = keep forever (lifetime counters are never pruned) | max dead-letter rows kept (`0` = unlimited) |
 | `CARTEIRO_REQUIRE_TLS` | `false` | `true` requires STARTTLS before AUTH (outside loopback) |
 | `CARTEIRO_TLS_CERT` / `CARTEIRO_TLS_KEY` | — | enable TLS with base64 of the PEM cert/key (files are not supported) |
 | `CARTEIRO_TLS_MODE` | `starttls` | `starttls` (587) or `implicit` (465) |

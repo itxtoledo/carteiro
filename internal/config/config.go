@@ -185,13 +185,16 @@ type Config struct {
 	LogLevel        string   `yaml:"log_level"`
 	LogMaskEmails   bool     `yaml:"log_mask_emails"`
 
-	API      *API      `yaml:"api"`
-	Web      *Web      `yaml:"web"`
-	Queue    QueueCfg  `yaml:"queue"`
-	TLS      *TLS      `yaml:"tls"`
-	Delivery Delivery  `yaml:"delivery"`
-	DKIM     []DKIMKey `yaml:"dkim"`
-	Accounts []Account `yaml:"accounts"`
+	API   *API     `yaml:"api"`
+	Web   *Web     `yaml:"web"`
+	Queue QueueCfg `yaml:"queue"`
+	// SendHistoryDays bounds the persisted panel history (sends_log); 0 keeps
+	// everything. Lifetime counters are never pruned.
+	SendHistoryDays int       `yaml:"send_history_days"`
+	TLS             *TLS      `yaml:"tls"`
+	Delivery        Delivery  `yaml:"delivery"`
+	DKIM            []DKIMKey `yaml:"dkim"`
+	Accounts        []Account `yaml:"accounts"`
 
 	// dkimEnv holds DKIM keys configured through CARTEIRO_DKIM_*; they
 	// override the YAML entries for the same domains.
@@ -204,16 +207,17 @@ var ConfigFile = ""
 func defaults() *Config {
 	host, _ := os.Hostname()
 	return &Config{
-		Listen:         ":587",
-		Hostname:       host,
-		Storage:        &Storage{Type: "sqlite"},
-		MaxMessageSize: 25 << 20, // 25 MiB
-		MaxRecipients:  100,
-		RequireTLS:     false,
-		LogLevel:       "info",
-		LogMaskEmails:  true,
-		Delivery:       Delivery{ConnectTimeout: Duration(30 * time.Second), IOTimeout: Duration(2 * time.Minute), RetryBase: Duration(time.Minute), RetryMax: Duration(4 * time.Hour), MaxAttempts: 10, PollInterval: Duration(5 * time.Second), Concurrency: 4},
-		Queue:          QueueCfg{DeadMax: 1000},
+		Listen:          ":587",
+		Hostname:        host,
+		Storage:         &Storage{Type: "sqlite"},
+		MaxMessageSize:  25 << 20, // 25 MiB
+		MaxRecipients:   100,
+		RequireTLS:      false,
+		LogLevel:        "info",
+		LogMaskEmails:   true,
+		Delivery:        Delivery{ConnectTimeout: Duration(30 * time.Second), IOTimeout: Duration(2 * time.Minute), RetryBase: Duration(time.Minute), RetryMax: Duration(4 * time.Hour), MaxAttempts: 10, PollInterval: Duration(5 * time.Second), Concurrency: 4},
+		Queue:           QueueCfg{DeadMax: 1000},
+		SendHistoryDays: 30,
 	}
 }
 
@@ -387,6 +391,9 @@ func applyEnv(c *Config) error {
 		return err
 	}
 	if err := setIntField("CARTEIRO_QUEUE_DEAD_MAX", &c.Queue.DeadMax); err != nil {
+		return err
+	}
+	if err := setIntField("CARTEIRO_SENDS_RETENTION_DAYS", &c.SendHistoryDays); err != nil {
 		return err
 	}
 	if err := setInt("CARTEIRO_MAX_MESSAGE_SIZE", &c.MaxMessageSize); err != nil {
@@ -568,6 +575,9 @@ func (c *Config) normalizeAndValidate() error {
 	}
 	if c.Queue.DeadMax < 0 {
 		return fmt.Errorf("queue.dead_max must be >= 0 (0 disables the limit)")
+	}
+	if c.SendHistoryDays < 0 {
+		return fmt.Errorf("send_history_days must be >= 0 (0 keeps the history forever)")
 	}
 	switch c.Storage.Type {
 	case "", "sqlite":

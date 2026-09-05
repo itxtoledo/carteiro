@@ -199,7 +199,11 @@ them.
   512<<10)`): `smtpd` records on enqueue (Add BEFORE the DB insert, `Drop`
   on failure), `relay` updates attempts/delivered/dead (attempts kept on
   delivered/dead), the retry endpoint re-queues. The feed survives restarts
-  and never stores credentials; bodies are capped per entry.
+  and never stores credentials; bodies are capped per entry and rows older
+  than `CARTEIRO_SENDS_RETENTION_DAYS` (default 30) are pruned hourly and on
+  startup. Lifetime counters (`stats_counters` single row, bumped at the same
+  sites as the in-memory metrics) feed `/api/stats` and the Prometheus
+  endpoint, so dashboard totals also survive restarts.
 - SPA: `web/fs.go` embeds `web/dist`; `internal/webui` serves files, falls
   back to `index.html` for extension-less GETs and never swallows `/api/*`
   (unknown API routes 404). `//go:embed` needs `web/dist` to exist — the

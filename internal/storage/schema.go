@@ -77,6 +77,19 @@ var migrations = []string{
 		updated_at  INTEGER NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_sends_log_queued ON sends_log(queued_at DESC)`,
+	// Lifetime relay counters (single row): totals survive restarts and are
+	// independent of the sends_log retention window.
+	`CREATE TABLE IF NOT EXISTS stats_counters (
+		id                 INTEGER PRIMARY KEY CHECK (id = 1),
+		auth_success       INTEGER NOT NULL DEFAULT 0,
+		auth_failure       INTEGER NOT NULL DEFAULT 0,
+		messages_queued    INTEGER NOT NULL DEFAULT 0,
+		delivery_attempts  INTEGER NOT NULL DEFAULT 0,
+		messages_delivered INTEGER NOT NULL DEFAULT 0,
+		messages_dead      INTEGER NOT NULL DEFAULT 0,
+		messages_requeued  INTEGER NOT NULL DEFAULT 0,
+		updated_at         INTEGER NOT NULL
+	)`,
 }
 
 func (s *Store) migrate() error {

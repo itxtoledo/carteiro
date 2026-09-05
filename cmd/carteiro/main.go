@@ -132,6 +132,32 @@ func run() error {
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	go deliverer.Run(workerCtx)
 
+	// Send-history retention: prune rows older than the configured window on
+	// startup and hourly. Lifetime counters are not affected by pruning.
+	if cfg.SendHistoryDays > 0 {
+		if n, err := store.PruneSendLogs(cfg.SendHistoryDays); err != nil {
+			logger.Warn("send-history prune failed on startup", "err", err)
+		} else if n > 0 {
+			logger.Info("send-history prune", "removed", n, "retention_days", cfg.SendHistoryDays)
+		}
+		go func() {
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if n, err := store.PruneSendLogs(cfg.SendHistoryDays); err != nil {
+						logger.Warn("send-history prune failed", "err", err)
+					} else if n > 0 {
+						logger.Info("send-history prune", "removed", n, "retention_days", cfg.SendHistoryDays)
+					}
+				}
+			}
+		}()
+	}
+
 	select {
 	case err := <-serveErr:
 		if err != nil {
