@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"carteiro/internal/acme"
 	"carteiro/internal/api"
 	"carteiro/internal/config"
 	"carteiro/internal/dkim"
@@ -39,6 +40,7 @@ func main() {
 func run() error {
 	var configPath string
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	manageACME := flag.Bool("acme", false, "manage a Let's Encrypt certificate for the SMTP listener (overrides CARTEIRO_ACME)")
 	flag.StringVar(&configPath, "config", "", "path to the config file (default: looks in /etc/carteiro and the user config dirs)")
 	flag.Parse()
 
@@ -47,9 +49,29 @@ func run() error {
 		return nil
 	}
 
+	acmeFlagSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "acme" {
+			acmeFlagSet = true
+		}
+	})
+
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
+	}
+	// The CLI flag wins over CARTEIRO_ACME; re-validate because the override
+	// happens after Load.
+	if acmeFlagSet {
+		if cfg.ACME == nil {
+			cfg.ACME = &config.ACME{}
+		}
+		cfg.ACME.Enabled = *manageACME
+		if cfg.ACME.Enabled {
+			if err := cfg.ACME.Validate(cfg.Hostname); err != nil {
+				return err
+			}
+		}
 	}
 
 	logger := logmask.NewLogger(newLogger(cfg.LogLevel), cfg.LogMaskEmails)
@@ -86,6 +108,34 @@ func run() error {
 		return err
 	}
 
+	// Managed TLS (ACME): when enabled, Carteiro obtains and renews a
+	// Let's Encrypt certificate for the SMTP hostname itself and the SMTP
+	// listener resolves it dynamically (no restart on renewal). When
+	// disabled, an external proxy (or the base64 tls.* settings) keep
+	// handling certificates.
+	var acmeMgr *acme.Manager
+	if cfg.ACME != nil && cfg.ACME.Enabled {
+		dir := acme.DirectoryProduction
+		if cfg.ACME.Staging {
+			dir = acme.DirectoryStaging
+		}
+		mgr, err := acme.New(cfg.ACME, cfg.Hostname, store, logger, dir)
+		if err != nil {
+			return err
+		}
+		initCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		mgr.Init(initCtx)
+		cancel()
+		tlsMode := "starttls"
+		if cfg.TLS != nil && cfg.TLS.Mode == "implicit" {
+			tlsMode = "implicit"
+		}
+		server.UseManagedTLS(tlsMode, mgr.GetCertificate)
+		acmeMgr = mgr
+		logger.Info("managed tls (acme) enabled",
+			"domain", cfg.Hostname, "challenge", "http-01", "directory", dir, "tls_mode", tlsMode)
+	}
+
 	logger.Info("carteiro starting",
 		"version", version,
 		"config", cfg.ConfigFilePath(),
@@ -104,6 +154,9 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if acmeMgr != nil {
+		go acmeMgr.Run(ctx)
+	}
 
 	serveErr := make(chan error, 3)
 	go func() {

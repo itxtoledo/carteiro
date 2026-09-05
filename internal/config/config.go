@@ -151,6 +151,39 @@ type Web struct {
 	Listen string `yaml:"listen"`
 }
 
+// ACME lets Carteiro manage its own Let's Encrypt certificate for the SMTP
+// listener (obtained and renewed in-process via lego), instead of loading one
+// from the base64 TLS settings or leaving TLS to a proxy in front. When
+// disabled (default) nothing changes and an external proxy can terminate TLS.
+type ACME struct {
+	Enabled  bool   `yaml:"enabled"`
+	Email    string `yaml:"email"`
+	HTTPAddr string `yaml:"http_addr"`
+	Staging  bool   `yaml:"staging"`
+}
+
+// Validate checks the ACME configuration against the SMTP hostname it will
+// secure. It is applied during Load and re-applied in main after the -acme
+// CLI flag overrides CARTEIRO_ACME.
+func (a *ACME) Validate(hostname string) error {
+	a.Email = strings.TrimSpace(a.Email)
+	if a.Email == "" {
+		return fmt.Errorf("acme requires an email (acme.email or CARTEIRO_ACME_EMAIL) for registration")
+	}
+	if ip := net.ParseIP(hostname); ip != nil || !strings.Contains(hostname, ".") {
+		return fmt.Errorf("acme needs a public DNS hostname, got %q (set CARTEIRO_HOSTNAME)", hostname)
+	}
+	// Only the http-01 challenge is supported: no DNS provider/API keys.
+	a.HTTPAddr = normalizeListen(a.HTTPAddr)
+	if a.HTTPAddr == "" {
+		a.HTTPAddr = ":80"
+	}
+	if _, _, err := net.SplitHostPort(a.HTTPAddr); err != nil {
+		return fmt.Errorf("invalid acme.http_addr %q: %w", a.HTTPAddr, err)
+	}
+	return nil
+}
+
 // Account is a seed account (login + password in plain text). Seeds are
 // upserted into the database at startup with clear logs; passwords are
 // hashed there. Subsequent runtime changes go through the admin API.
@@ -187,6 +220,7 @@ type Config struct {
 
 	API      *API      `yaml:"api"`
 	Web      *Web      `yaml:"web"`
+	ACME     *ACME     `yaml:"acme"`
 	Queue    QueueCfg  `yaml:"queue"`
 	TLS      *TLS      `yaml:"tls"`
 	Delivery Delivery  `yaml:"delivery"`
@@ -469,6 +503,37 @@ func applyEnv(c *Config) error {
 		}
 		c.Web.Listen = v
 	}
+	// Managed Let's Encrypt TLS (lego). Off unless explicitly enabled; the
+	// CLI flag -acme in main overrides CARTEIRO_ACME.
+	if v, ok := os.LookupEnv("CARTEIRO_ACME"); ok {
+		if c.ACME == nil {
+			c.ACME = &ACME{}
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("invalid CARTEIRO_ACME: %w", err)
+		}
+		c.ACME.Enabled = b
+	}
+	setACMENeeded := func() *ACME {
+		if c.ACME == nil {
+			c.ACME = &ACME{}
+		}
+		return c.ACME
+	}
+	if v := os.Getenv("CARTEIRO_ACME_EMAIL"); v != "" {
+		setACMENeeded().Email = v
+	}
+	if v := os.Getenv("CARTEIRO_ACME_HTTP_ADDR"); v != "" {
+		setACMENeeded().HTTPAddr = v
+	}
+	if v, ok := os.LookupEnv("CARTEIRO_ACME_STAGING"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("invalid CARTEIRO_ACME_STAGING: %w", err)
+		}
+		setACMENeeded().Staging = b
+	}
 	if err := applyDKIMEnv(c); err != nil {
 		return err
 	}
@@ -608,6 +673,11 @@ func (c *Config) normalizeAndValidate() error {
 		}
 	} else if c.Web != nil {
 		return fmt.Errorf("the web panel needs the admin API: set api.token / CARTEIRO_API_TOKEN (web.listen alone is not enough)")
+	}
+	if c.ACME != nil && c.ACME.Enabled {
+		if err := c.ACME.Validate(c.Hostname); err != nil {
+			return err
+		}
 	}
 
 	// Normalize seed accounts (emails lowercased, last duplicate wins so env

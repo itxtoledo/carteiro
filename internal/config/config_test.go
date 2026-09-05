@@ -616,3 +616,39 @@ func TestBarePortListenIsNormalized(t *testing.T) {
 		t.Errorf("bare web port via HTTP_ADDR = %q", cfg4.Web.Listen)
 	}
 }
+
+func TestACMEConfigAndValidation(t *testing.T) {
+	configViaEnvIsolada(t)
+	// Enabled without an email is rejected.
+	t.Setenv("CARTEIRO_HOSTNAME", "smtp.example.com")
+	t.Setenv("CARTEIRO_ACME", "true")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "email") {
+		t.Fatalf("expected missing-email error, got %v", err)
+	}
+	// Hostname must be a domain, not an IP.
+	t.Setenv("CARTEIRO_ACME_EMAIL", "ops@example.com")
+	t.Setenv("CARTEIRO_HOSTNAME", "127.0.0.1")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "hostname") {
+		t.Fatalf("expected hostname error, got %v", err)
+	}
+	t.Setenv("CARTEIRO_HOSTNAME", "smtp.example.com")
+
+	// Defaults: only the http-01 challenge (no DNS provider/API keys), with
+	// the validation listener on :80.
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.ACME.Enabled || cfg.ACME.HTTPAddr != ":80" {
+		t.Errorf("acme defaults wrong: %+v", cfg.ACME)
+	}
+	// A bare HTTP port number for the challenge listener is accepted.
+	t.Setenv("CARTEIRO_ACME_HTTP_ADDR", "8080")
+	cfg2, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.ACME.HTTPAddr != ":8080" {
+		t.Errorf("acme env override wrong: %+v", cfg2.ACME)
+	}
+}

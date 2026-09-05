@@ -57,6 +57,23 @@ var migrations = []string{
 		permanent_json TEXT NOT NULL DEFAULT '{}'
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_queue_status_next ON queue_messages(status, next_attempt)`,
+	// ACME-managed TLS state: the registration account (email + private key)
+	// and the last certificate obtained for the SMTP listener. Single-row
+	// tables (id is always 1).
+	`CREATE TABLE IF NOT EXISTS acme_account (
+		id          INTEGER PRIMARY KEY CHECK (id = 1),
+		email       TEXT NOT NULL,
+		account_key TEXT NOT NULL,
+		updated_at  INTEGER NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS managed_cert (
+		id         INTEGER PRIMARY KEY CHECK (id = 1),
+		domain     TEXT NOT NULL,
+		cert_pem   TEXT NOT NULL,
+		key_pem    TEXT NOT NULL,
+		not_after  INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	)`,
 }
 
 func (s *Store) migrate() error {
