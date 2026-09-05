@@ -106,10 +106,10 @@ Environment equivalents: `CARTEIRO_STORAGE_TYPE`, `CARTEIRO_SQLITE_PATH`,
 
 ```yaml
 api:                          # admin REST API (separate port)
-  listen: "127.0.0.1:9090"    # loopback by default
-web:                          # web dashboard (React SPA)
-  listen: ":8080"
+  listen: "127.0.0.1:9090"    # loopback by default; env: CARTEIRO_API_LISTEN=9090
   token: "a-long-random-token"
+web:                          # web dashboard (React SPA)
+  listen: ":8080"             # binds all interfaces; env: CARTEIRO_WEB_LISTEN=8080
 ```
 
 The token is **deliberately not stored in the database** — it lives only here
@@ -120,13 +120,13 @@ stays **off** until the token is configured.
 
 | Variable | Default | Description |
 |---|---|---|
-| `CARTEIRO_LISTEN` | `:587` | submission server address (a bare port like `587` is accepted and normalized) |
+| `CARTEIRO_LISTEN` | `587` | submission server port — type the number, no `:` needed |
 | `CARTEIRO_HOSTNAME` | machine hostname | name used in EHLO/banner (should match the PTR) |
 | `CARTEIRO_STORAGE_TYPE` | `sqlite` | `sqlite` or `mysql` |
 | `CARTEIRO_SQLITE_PATH` | OS default | SQLite database file |
 | `CARTEIRO_DB_DSN` | — | MySQL DSN (implies `type: mysql`) |
-| `CARTEIRO_API_LISTEN` | `127.0.0.1:9090` | admin API address (loopback by default; a bare port like `9090` works; off without a token) |
-| `CARTEIRO_WEB_LISTEN` | `:8080` | web dashboard listener (a bare port like `8080` works) |
+| `CARTEIRO_API_LISTEN` | `9090` | admin API port — type the number, no `:` needed (loopback by default; off without a token) |
+| `CARTEIRO_WEB_LISTEN` | `8080` | web dashboard port — type the number, no `:` needed |
 | `HTTP_ADDR` / `CARTEIRO_HTTP_ADDR` | — | aliases for `CARTEIRO_WEB_LISTEN` (the panel, not the API) |
 | `CARTEIRO_API_TOKEN` | — | single bearer token (enables the admin API) |
 | `CARTEIRO_ACCOUNTS` | — | seed accounts `email:password` separated by `;` |
@@ -352,7 +352,7 @@ Practical rules:
   reach it over a VPN / SSH tunnel.
 - **9090** (admin API) binds to `127.0.0.1` by default: inside a container it
   is only reachable by the panel's in-process proxy. To call it from the host
-  or external tools, set `CARTEIRO_API_LISTEN=":9090"` and publish the port
+  or external tools, set `CARTEIRO_API_LISTEN=9090` (bare number) and publish
   (firewalled).
 - Changing the SMTP port is just `CARTEIRO_LISTEN=":2525"` (then point
   Nodemailer at 2525); there is no magic in 587/465 besides convention.
@@ -416,7 +416,7 @@ Which mappings you need:
 |---|---|---|
 | only SMTP for internal apps | `587:587` | none |
 | open the web dashboard too | + `8080:8080` | none (`web.listen` already binds `:8080`) |
-| call the admin API from the host/tools | + `9090:9090` | `CARTEIRO_API_LISTEN=:9090` (the default `127.0.0.1:9090` is loopback-only and cannot be reached from the host) |
+| call the admin API from the host/tools | + `9090:9090` | `CARTEIRO_API_LISTEN=9090` (a bare number is fine; without it the API binds loopback only and cannot be reached from the host) |
 
 The web dashboard proxies `/api/*` to the API listener **inside the
 container**, so a browser only needs port `8080` even when the API is not
@@ -433,7 +433,7 @@ docker run -d --name carteiro \
   -p 9090:9090 \
   -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:a-strong-password' \
   -e CARTEIRO_API_TOKEN='a-long-random-token' \
-  -e CARTEIRO_API_LISTEN=':9090' \   # reach the admin API from the host (loopback by default)
+  -e CARTEIRO_API_LISTEN='9090' \    # bare number; reaches the API from the host (loopback by default)
   -v carteiro-data:/var/lib/carteiro \
   ghcr.io/itxtoledo/carteiro:latest
 ```
@@ -550,7 +550,7 @@ services:
     environment:
       CARTEIRO_ACCOUNTS: "sender@yourdomain.com:password"
       CARTEIRO_API_TOKEN: "a-long-random-token"
-      CARTEIRO_API_LISTEN: ":9090"   # admin API (loopback by default)
+      CARTEIRO_API_LISTEN: "9090"    # admin API (bare number; loopback by default)
     volumes:
       - carteiro-data:/var/lib/carteiro
 volumes:
