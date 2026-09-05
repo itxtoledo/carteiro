@@ -76,7 +76,7 @@ func run() error {
 	// rec powers the web panel's recent-sends feed (list, rendered bodies and
 	// live delivery status). It is an in-memory ring: the database queue
 	// remains the source of truth for delivery.
-	rec := sends.New(200, 512<<10)
+	rec := sends.New(store, 512<<10)
 	server, err := smtpd.New(cfg, store, logger, counters, rec)
 	if err != nil {
 		return err

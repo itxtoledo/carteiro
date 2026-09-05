@@ -57,6 +57,26 @@ var migrations = []string{
 		permanent_json TEXT NOT NULL DEFAULT '{}'
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_queue_status_next ON queue_messages(status, next_attempt)`,
+	// Persistent send history for the web panel: one row per accepted
+	// message, appended at queue time and updated as delivery progresses
+	// (survives restarts, unlike the old in-memory ring).
+	`CREATE TABLE IF NOT EXISTS sends_log (
+		id          TEXT PRIMARY KEY,
+		sender      TEXT NOT NULL,
+		to_json     TEXT NOT NULL,
+		subject     TEXT NOT NULL DEFAULT '',
+		status      TEXT NOT NULL DEFAULT 'queued',
+		attempts    INTEGER NOT NULL DEFAULT 0,
+		size        INTEGER NOT NULL DEFAULT 0,
+		truncated   INTEGER NOT NULL DEFAULT 0,
+		last_error  TEXT NOT NULL DEFAULT '',
+		html        TEXT NOT NULL DEFAULT '',
+		text        TEXT NOT NULL DEFAULT '',
+		raw         TEXT NOT NULL DEFAULT '',
+		queued_at   INTEGER NOT NULL,
+		updated_at  INTEGER NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_sends_log_queued ON sends_log(queued_at DESC)`,
 }
 
 func (s *Store) migrate() error {

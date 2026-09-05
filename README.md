@@ -266,7 +266,7 @@ configured. Every call except `/health` and `/metrics` needs
 | `GET /api/queue?status=dead` | list queued/dead messages (no bodies) |
 | `POST /api/queue/{id}/retry` | move a dead message back to the queue (attempts reset) |
 | `GET /api/stats` | dashboard summary: counters + queue gauges + version/uptime |
-| `GET /api/sends?limit=N` | recent sends (ring buffer): subject, status, attempts |
+| `GET /api/sends?limit=N` | recent sends (persistent history): subject, status, attempts |
 | `GET /api/sends/{id}` | one send with rendered `html`/`text` + raw source |
 | `POST /api/send` | compose and queue `{"from","to":[],"subject","text","html"}` → 201 |
 | `GET /api/openapi.json` | OpenAPI 3 document (no auth) — point Swagger UI at it |
@@ -280,8 +280,8 @@ configured. Every call except `/health` and `/metrics` needs
 > respect the same sender rules as SMTP (the `from` must belong to an account
 > or its `allowed_from`) and land in the same queue, so delivery, DKIM
 > signing and retries behave identically. Recent-sends tracking is an
-> in-memory ring (200 messages, body capped); it resets on restart and never
-> stores credentials.
+> persistent `sends_log` table (bodies capped to keep the DB lean): history
+> survives restarts and never stores credentials.
 
 ```bash
 TOKEN="a-long-random-token"

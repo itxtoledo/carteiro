@@ -34,7 +34,7 @@ internal/relay/       MX delivery worker (retry/backoff, dead-letter)
 internal/dkim/        DKIM signing (RSA/Ed25519 via go-msgauth)
 internal/api/         web server: admin REST API + dashboard routes (bearer),
                       openapi.json, SPA mount
-internal/sends/       recent-sends ring buffer + RFC 5322 build/parse helpers
+internal/sends/       persistent send history access + RFC 5322 build/parse
 internal/webui/       embedded SPA handler over web/dist (go:embed)
 internal/metrics/     atomic Prometheus counters
 web/                  React + Vite + Tailwind dashboard (src -> dist, embedded)
@@ -194,11 +194,12 @@ them.
   dashboard's Accounts screen uses the PATCH endpoint; `GET/POST /api/accounts`
   only list/create. Composed messages go through `storage.EnqueueWithID`
   with a queue id in `Message-ID`.
-- The recent-sends feed is an **in-memory ring** (`internal/sends`, wired in
-  `main` as `sends.New(200, 512<<10)`): `smtpd` records on enqueue (Add
-  BEFORE the DB insert, `Drop` on failure), `relay` updates attempts/
-  delivered/dead, the retry endpoint re-queues. The database queue remains
-  the source of truth; the ring resets on restart and stores no credentials.
+- The send history is **persisted** in the `sends_log` table
+  (`internal/sends.Recorder`, wired in `main` as `sends.New(store,
+  512<<10)`): `smtpd` records on enqueue (Add BEFORE the DB insert, `Drop`
+  on failure), `relay` updates attempts/delivered/dead (attempts kept on
+  delivered/dead), the retry endpoint re-queues. The feed survives restarts
+  and never stores credentials; bodies are capped per entry.
 - SPA: `web/fs.go` embeds `web/dist`; `internal/webui` serves files, falls
   back to `index.html` for extension-less GETs and never swallows `/api/*`
   (unknown API routes 404). `//go:embed` needs `web/dist` to exist — the

@@ -86,7 +86,7 @@ export function DashboardPage() {
       <Card>
         <CardHeader
           title="Recent activity"
-          subtitle="Last messages seen by the relay (in-memory ring)"
+          subtitle="Most recent messages (persistent history)"
           right={
             <Link to="/sends" className="text-xs font-medium text-[#0073bb] hover:underline dark:text-[#44b9d6]">
               View all →

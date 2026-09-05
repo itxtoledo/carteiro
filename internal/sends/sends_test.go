@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"carteiro/internal/storage"
 )
 
 func TestBuildAndParseRoundTrip(t *testing.T) {
@@ -85,8 +87,19 @@ func TestParseQuotedPrintableLatin1(t *testing.T) {
 	}
 }
 
+func openRecorderStore(t *testing.T) *storage.Store {
+	t.Helper()
+	st, err := storage.Open("sqlite", t.TempDir()+"/sends.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
 func TestRecorderLifecycle(t *testing.T) {
-	r := New(10, 1<<20)
+	store := openRecorderStore(t)
+	r := New(store, 1<<20)
 	data, _ := BuildMessage("id-1", "from@example.com", []string{"to@example.com"}, "Sub", "Hello", "")
 	r.Add("id-1", "from@example.com", []string{"to@example.com"}, data)
 	r.Add("id-2", "from@example.com", []string{"to@example.com"}, []byte("Subject: Two\n\nplain"))
@@ -125,8 +138,33 @@ func TestRecorderLifecycle(t *testing.T) {
 	}
 }
 
+func TestHistoryPersistsAcrossRecorders(t *testing.T) {
+	store := openRecorderStore(t)
+	r1 := New(store, 1<<20)
+	for i := 0; i < 4; i++ {
+		r1.Add(fmt.Sprintf("id-%d", i), "f@example.com", []string{"t@example.com"}, []byte("Subject: s\n\nbody"))
+	}
+	r1.MarkDelivered("id-1")
+
+	// A brand-new recorder over the same database sees the whole history:
+	// this is what makes the panel survive restarts.
+	r2 := New(store, 1<<20)
+	sums := r2.List(0)
+	if len(sums) != 4 {
+		t.Fatalf("history size after new recorder = %d, want 4", len(sums))
+	}
+	if sums[0].ID != "id-3" || sums[3].ID != "id-0" {
+		t.Errorf("ordering wrong after reload: %+v", sums)
+	}
+	d, ok := r2.Get("id-1")
+	if !ok || d.Status != StatusDelivered {
+		t.Errorf("status did not survive reload: ok=%v d=%+v", ok, d)
+	}
+}
+
 func TestRecorderCapsBody(t *testing.T) {
-	r := New(5, 64) // tiny cap
+	store := openRecorderStore(t)
+	r := New(store, 64) // tiny cap
 	big := []byte("Subject: big\n\n" + strings.Repeat("x", 500))
 	r.Add("b", "f@example.com", []string{"t@example.com"}, big)
 	sums := r.List(1)
@@ -151,20 +189,22 @@ func TestNilRecorderIsNoop(t *testing.T) {
 	}
 }
 
-func TestRecorderEvictsOldest(t *testing.T) {
-	r := New(3, 1<<20)
+func TestRecorderListLimit(t *testing.T) {
+	store := openRecorderStore(t)
+	r := New(store, 1<<20)
 	for i := 0; i < 5; i++ {
 		r.Add(fmt.Sprintf("id-%d", i), "f@example.com", []string{"t@example.com"}, []byte("Subject: s\n\nbody"))
 	}
-	sums := r.List(0)
+	sums := r.List(3)
 	if len(sums) != 3 {
-		t.Fatalf("ring size = %d, want 3", len(sums))
+		t.Fatalf("limited list = %d, want 3", len(sums))
 	}
-	if sums[0].ID != "id-4" || sums[2].ID != "id-2" {
-		t.Errorf("eviction kept the wrong entries: %+v", sums)
+	if sums[0].ID != "id-4" {
+		t.Errorf("limit did not keep the newest first: %+v", sums)
 	}
-	if _, ok := r.Get("id-0"); ok {
-		t.Error("evicted id-0 still present")
+	// The older entries remain stored (history is not evicted).
+	if got := r.List(0); len(got) != 5 {
+		t.Errorf("history size = %d, want 5 (no eviction)", len(got))
 	}
 }
 
