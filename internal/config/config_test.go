@@ -633,27 +633,22 @@ func TestACMEConfigAndValidation(t *testing.T) {
 	}
 	t.Setenv("CARTEIRO_HOSTNAME", "smtp.example.com")
 
-	// Defaults: provider http01, challenge listener :80.
+	// Defaults: only the http-01 challenge (no DNS provider/API keys), with
+	// the validation listener on :80.
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.ACME.Enabled || cfg.ACME.Provider != "http01" || cfg.ACME.HTTPAddr != ":80" {
+	if !cfg.ACME.Enabled || cfg.ACME.HTTPAddr != ":80" {
 		t.Errorf("acme defaults wrong: %+v", cfg.ACME)
 	}
-	// Provider override and a bare HTTP port number.
-	t.Setenv("CARTEIRO_ACME_PROVIDER", "cloudflare")
+	// A bare HTTP port number for the challenge listener is accepted.
 	t.Setenv("CARTEIRO_ACME_HTTP_ADDR", "8080")
 	cfg2, err := Load("")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg2.ACME.Provider != "cloudflare" || cfg2.ACME.HTTPAddr != ":8080" {
-		t.Errorf("acme env overrides wrong: %+v", cfg2.ACME)
-	}
-	// Invalid provider rejected.
-	t.Setenv("CARTEIRO_ACME_PROVIDER", "nonsense")
-	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "provider") {
-		t.Fatalf("expected provider error, got %v", err)
+	if cfg2.ACME.HTTPAddr != ":8080" {
+		t.Errorf("acme env override wrong: %+v", cfg2.ACME)
 	}
 }

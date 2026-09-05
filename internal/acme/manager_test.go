@@ -99,7 +99,7 @@ func openStore(t *testing.T) *storage.Store {
 }
 
 func newTestManager(t *testing.T, st *storage.Store, fake *fakeObtainer) *Manager {
-	m, err := New(&config.ACME{Email: "ops@example.com", Provider: "http01", HTTPAddr: ":80"},
+	m, err := New(&config.ACME{Email: "ops@example.com", HTTPAddr: ":80"},
 		"smtp.example.com", st, testLogger(), DirectoryStaging)
 	if err != nil {
 		t.Fatal(err)

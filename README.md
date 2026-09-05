@@ -147,7 +147,6 @@ stays **off** until the token is configured.
 | `CARTEIRO_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `CARTEIRO_ACME` | `false` | manage a Let's Encrypt certificate for the SMTP listener in-process (off = proxy/base64 TLS handles it) |
 | `CARTEIRO_ACME_EMAIL` | — | registration e-mail (required when ACME is on) |
-| `CARTEIRO_ACME_PROVIDER` | `http01` | challenge: `http01` (needs port 80 reachable) or `cloudflare` (DNS-01, needs `CF_DNS_API_TOKEN`) |
 | `CARTEIRO_ACME_HTTP_ADDR` | `:80` | listener for the http-01 challenge |
 | `CARTEIRO_ACME_STAGING` | `false` | `true` = Let's Encrypt staging (test before going live) |
 | `CARTEIRO_LOG_MASK_EMAILS` | `true` | e-mails are masked in the logs (`joao@example.com` → `j***@e***.com`); set `false` to log full addresses (debugging only) |
@@ -926,20 +925,20 @@ Enable it with `CARTEIRO_ACME=true` (or the CLI flag `-acme`, which overrides
 the environment):
 
 ```bash
-# http-01 challenge (default): port 80 must be reachable from the internet
 CARTEIRO_ACME=true
 CARTEIRO_ACME_EMAIL=you@example.com          # ACME registration
 CARTEIRO_HOSTNAME=smtp.example.com           # public name of the relay
-
-# or DNS-01 via Cloudflare (no open port needed; requires a DNS Edit token)
-CARTEIRO_ACME_PROVIDER=cloudflare
-CF_DNS_API_TOKEN=...                          # lego reads this standard var
+# challenge http-01: the public port 80 must reach the relay, so map 80:80
+# (Coolify Port Mappings) and use a DNS-only (grey cloud) A record
 ```
 
-The YAML equivalent is `acme.enabled/email/provider/http_addr/staging`, and
-`CARTEIRO_ACME_STAGING=true` points at the Let's Encrypt staging directory for
-tests (certificates there are not trusted by clients). Do not configure
-`tls.cert_data/key_data` at the same time: managed mode ignores them.
+Only the **http-01** challenge is used — no DNS provider, no API keys of any
+kind. Carteiro binds `CARTEIRO_ACME_HTTP_ADDR` (default `:80`) during the
+few seconds of validation. The YAML equivalent is
+`acme.enabled/email/http_addr/staging`; `CARTEIRO_ACME_STAGING=true` points at
+the Let's Encrypt staging directory for tests (those certificates are not
+trusted by clients). Do not configure `tls.cert_data/key_data` at the same
+time: managed mode ignores them.
 
 > **Running behind a proxy?** Leave ACME off (the default). A proxy in front
 > (Coolify/Traefik, another MTA, a load balancer) keeps terminating TLS and

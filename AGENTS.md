@@ -96,9 +96,9 @@ Key rules (validated in `config.normalizeAndValidate`):
   PANEL; `CARTEIRO_API_LISTEN` configures the API.
 - **Managed TLS (ACME)** (`CARTEIRO_ACME=true` or `-acme` flag, off by
   default): `internal/acme` uses lego to obtain/renew a Let's Encrypt
-  certificate for `CARTEIRO_HOSTNAME` (challenge `http01` on
-  `CARTEIRO_ACME_HTTP_ADDR`/`:80`, or `cloudflare` DNS-01 reading the lego
-  standard `CF_DNS_API_TOKEN`); the account and certificate persist in the
+  certificate for `CARTEIRO_HOSTNAME` using ONLY the http-01 challenge (no
+  DNS provider or API keys), served on `CARTEIRO_ACME_HTTP_ADDR` (`:80`);
+  the account and certificate persist in the
   DB (`acme_account`, `managed_cert`, single-row) and the SMTP listener
   serves them dynamically through `smtpd.UseManagedTLS` (no restart on
   renewal). Enabled ignores `tls.cert_data/key_data`. Keep it off when a

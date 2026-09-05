@@ -158,7 +158,6 @@ type Web struct {
 type ACME struct {
 	Enabled  bool   `yaml:"enabled"`
 	Email    string `yaml:"email"`
-	Provider string `yaml:"provider"`
 	HTTPAddr string `yaml:"http_addr"`
 	Staging  bool   `yaml:"staging"`
 }
@@ -174,14 +173,7 @@ func (a *ACME) Validate(hostname string) error {
 	if ip := net.ParseIP(hostname); ip != nil || !strings.Contains(hostname, ".") {
 		return fmt.Errorf("acme needs a public DNS hostname, got %q (set CARTEIRO_HOSTNAME)", hostname)
 	}
-	a.Provider = strings.ToLower(strings.TrimSpace(a.Provider))
-	switch a.Provider {
-	case "", "http01":
-		a.Provider = "http01"
-	case "cloudflare":
-	default:
-		return fmt.Errorf("acme.provider must be \"http01\" or \"cloudflare\", got %q", a.Provider)
-	}
+	// Only the http-01 challenge is supported: no DNS provider/API keys.
 	a.HTTPAddr = normalizeListen(a.HTTPAddr)
 	if a.HTTPAddr == "" {
 		a.HTTPAddr = ":80"
@@ -531,9 +523,6 @@ func applyEnv(c *Config) error {
 	}
 	if v := os.Getenv("CARTEIRO_ACME_EMAIL"); v != "" {
 		setACMENeeded().Email = v
-	}
-	if v := os.Getenv("CARTEIRO_ACME_PROVIDER"); v != "" {
-		setACMENeeded().Provider = v
 	}
 	if v := os.Getenv("CARTEIRO_ACME_HTTP_ADDR"); v != "" {
 		setACMENeeded().HTTPAddr = v

@@ -18,7 +18,6 @@ import (
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/challenge/http01"
 	"github.com/go-acme/lego/v4/lego"
-	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
 	"github.com/go-acme/lego/v4/registration"
 )
 
@@ -33,8 +32,10 @@ func (u *acmeUser) GetRegistration() *registration.Resource { return nil }
 func (u *acmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 
 // legoObtainer implements obtainer on top of the lego ACME client.
+// legoObtainer implements obtainer on top of the lego ACME client. Only the
+// http-01 challenge is used (no DNS provider or API keys): the validation
+// server binds httpAddr during issuance.
 type legoObtainer struct {
-	provider string // "http01" or "cloudflare"
 	httpAddr string // listener for the http-01 challenge (host:port)
 	dirURL   string // ACME directory; empty = Let's Encrypt production default
 	log      *slog.Logger
@@ -88,28 +89,16 @@ func (o *legoObtainer) Obtain(ctx context.Context, email, accountKeyPEM, domain 
 }
 
 func (o *legoObtainer) configureChallenges(client *lego.Client) error {
-	switch o.provider {
-	case "cloudflare":
-		provider, err := cloudflare.NewDNSProvider()
-		if err != nil {
-			return fmt.Errorf("acme cloudflare provider: %w (set CF_DNS_API_TOKEN)", err)
-		}
-		if err := client.Challenge.SetDNS01Provider(provider); err != nil {
-			return fmt.Errorf("acme dns-01 provider: %w", err)
-		}
-		o.log.Info("acme: challenge provider dns-01 (cloudflare)")
-	default:
-		host, port, err := net.SplitHostPort(o.httpAddr)
-		if err != nil {
-			host, port = "", "80"
-		}
-		host = strings.Trim(host, "[]")
-		provider := http01.NewProviderServer(host, port)
-		if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
-			return fmt.Errorf("acme http-01 provider: %w", err)
-		}
-		o.log.Info("acme: challenge provider http-01", "addr", o.httpAddr)
+	host, port, err := net.SplitHostPort(o.httpAddr)
+	if err != nil {
+		host, port = "", "80"
 	}
+	host = strings.Trim(host, "[]")
+	provider := http01.NewProviderServer(host, port)
+	if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
+		return fmt.Errorf("acme http-01 provider: %w", err)
+	}
+	o.log.Info("acme: challenge provider http-01", "addr", o.httpAddr)
 	return nil
 }
 

@@ -89,7 +89,7 @@ func (m *Manager) obtainer() obtainer {
 	if m.ob != nil {
 		return m.ob
 	}
-	m.ob = &legoObtainer{provider: m.cfg.Provider, httpAddr: m.cfg.HTTPAddr, dirURL: m.dirURL, log: m.log}
+	m.ob = &legoObtainer{httpAddr: m.cfg.HTTPAddr, dirURL: m.dirURL, log: m.log}
 	return m.ob
 }
 

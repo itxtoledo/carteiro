@@ -133,7 +133,7 @@ func run() error {
 		server.UseManagedTLS(tlsMode, mgr.GetCertificate)
 		acmeMgr = mgr
 		logger.Info("managed tls (acme) enabled",
-			"domain", cfg.Hostname, "provider", cfg.ACME.Provider, "directory", dir, "tls_mode", tlsMode)
+			"domain", cfg.Hostname, "challenge", "http-01", "directory", dir, "tls_mode", tlsMode)
 	}
 
 	logger.Info("carteiro starting",
