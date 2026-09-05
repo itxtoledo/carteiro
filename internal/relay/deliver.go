@@ -21,6 +21,7 @@ import (
 	"carteiro/internal/config"
 	"carteiro/internal/dkim"
 	"carteiro/internal/metrics"
+	"carteiro/internal/sends"
 	"carteiro/internal/storage"
 )
 
@@ -35,11 +36,13 @@ type Deliverer struct {
 	store   *storage.Store
 	log     *slog.Logger
 	metrics *metrics.Metrics
+	rec     *sends.Recorder
 }
 
-// New creates the deliverer.
-func New(cfg *config.Config, store *storage.Store, log *slog.Logger, m *metrics.Metrics) (*Deliverer, error) {
-	return &Deliverer{cfg: cfg, store: store, log: log, metrics: m}, nil
+// New creates the deliverer. rec receives delivery-state updates for the web
+// panel's recent-sends feed (may be nil).
+func New(cfg *config.Config, store *storage.Store, log *slog.Logger, m *metrics.Metrics, rec *sends.Recorder) (*Deliverer, error) {
+	return &Deliverer{cfg: cfg, store: store, log: log, metrics: m, rec: rec}, nil
 }
 
 // Run processes the queue until the context is cancelled.
@@ -90,6 +93,7 @@ func (d *Deliverer) processBatch() {
 func (d *Deliverer) deliver(m *storage.Message) {
 	start := time.Now()
 	id := m.ID
+	d.rec.BumpAttempt(id)
 	d.log.Info("delivering message", "id", id, "from", m.From, "to", m.To, "attempt", m.Attempts+1)
 
 	body, err := d.prepareBody(m)
@@ -174,6 +178,7 @@ func (d *Deliverer) deliver(m *storage.Message) {
 		d.log.Error("failed to remove the message from the queue", "id", id, "err", err)
 		return
 	}
+	d.rec.MarkDelivered(id)
 	if permCount > 0 {
 		d.log.Warn("message partially delivered", "id", id, "duration", time.Since(start).Round(time.Millisecond), "permanent_failures", permCount)
 		return
@@ -187,6 +192,7 @@ func (d *Deliverer) deadLetter(id, reason string) {
 		d.log.Error("dead-letter failed", "id", id, "err", err)
 		return
 	}
+	d.rec.MarkDead(id, reason)
 	d.metrics.MessagesDead.Add(1)
 }
 

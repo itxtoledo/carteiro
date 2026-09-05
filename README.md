@@ -14,11 +14,11 @@ memory.
 | Nodemailer | ----- 587 ---------► |  Carteiro (relay)                    | -------------------► Gmail/Outlook MX
 | your app   |                      |  +- smtpd    (auth via bcrypt in DB) |   opportunistic TLS
 +------------+                      |  +- deliverer (queue worker)         |   DKIM from DB
-                                    |  +- admin API :9090 (bearer)         |
+                                    |  +- web panel + admin API :8080     |
 +------------+   HTTPS + Bearer     |  +- sqlite / mysql                   |
-| your ops / | ----- /accounts -----►                                     |
-| portal     |      /dkim /queue    |                                      |
-+------------+                      +--------------------------------------+
+|  browser / | ----- /api/* --------►  +- React UI served at / (embedded)  |
+|    curl    |   accounts, dkim,     |                                     |
++------------+   queue, stats, send  +--------------------------------------+
 ```
 
 ## Table of contents
@@ -102,11 +102,11 @@ storage:
 Environment equivalents: `CARTEIRO_STORAGE_TYPE`, `CARTEIRO_SQLITE_PATH`,
 `CARTEIRO_DB_DSN`.
 
-### Admin API tokens (plain text, config only)
+### Web panel + API token (plain text, config only)
 
 ```yaml
 api:
-  listen: "127.0.0.1:9090"
+  listen: ":8080"              # web dashboard + admin API (default :8080)
   token: "a-long-random-token"
 ```
 
@@ -123,7 +123,8 @@ stays **off** until the token is configured.
 | `CARTEIRO_STORAGE_TYPE` | `sqlite` | `sqlite` or `mysql` |
 | `CARTEIRO_SQLITE_PATH` | OS default | SQLite database file |
 | `CARTEIRO_DB_DSN` | — | MySQL DSN (implies `type: mysql`) |
-| `CARTEIRO_API_LISTEN` | `127.0.0.1:9090` | admin API address (off without a token) |
+| `CARTEIRO_API_LISTEN` | `:8080` | web panel + admin API address (`HTTP_ADDR` accepted as alias; off without a token) |
+| `HTTP_ADDR` / `CARTEIRO_HTTP_ADDR` | — | aliases for `CARTEIRO_API_LISTEN` (panel + API listener) |
 | `CARTEIRO_API_TOKEN` | — | single bearer token (enables the admin API) |
 | `CARTEIRO_ACCOUNTS` | — | seed accounts `email:password` separated by `;` |
 | `CARTEIRO_DKIM_KEYS` | — | DKIM seeds: `doma.com:mail:<b64>;domb.com:selB:<b64>` (`;` separated, each key is the base64 of the whole PEM file) |
@@ -228,56 +229,87 @@ material; only the DNS record above is meant to be public.
 
 ---
 
-## Admin API (bearer) and monitoring
+## Web dashboard and admin API (bearer)
 
-The API runs on its own port (default `127.0.0.1:9090`), **off** until a token
+The repository ships a small **React dashboard** (Vite + Tailwind, AWS/GCP
+console style, dark/light) that is compiled and **embedded into the binary**
+(`go:embed`): one process, one port, no Node.js at runtime. It talks only to
+the API below using the same bearer token. Pages: **Dashboard** (counters,
+queue gauges, recent activity), **Compose** (send an e-mail straight into the
+queue), **Sends** (history with rendered HTML/text previews and live delivery
+status) and **Accounts** (add/remove SMTP users). The SPA is served at `/`;
+open `http://<host>:8080/` and log in with the API token.
+
+The dashboard + admin API share one HTTP listener (default `:8080`), **off** until a token
 is configured. Every call except `/health` and `/metrics` needs
 `Authorization: Bearer <token>`.
 
 | Endpoint | Description |
 |---|---|
-| `GET /health` | liveness (no auth) |
-| `GET /metrics` | Prometheus metrics (no auth) |
-| `GET /accounts` | list accounts (emails + allowed_from, never hashes) |
-| `POST /accounts` | create/update: `{"email","password","allowed_from":[]}` → 201/200 |
-| `DELETE /accounts/{email}` | remove an account |
-| `GET /dkim` | list domains + selectors (never the private key) |
-| `POST /dkim` | create/update: `{"domain","selector","key_data"}` (PEM) → 201/200 |
-| `DELETE /dkim/{domain}` | remove a DKIM key |
-| `GET /queue/stats` | `{"queued":N,"due":N,"dead":N}` |
-| `GET /queue?status=dead` | list queued/dead messages (no bodies) |
-| `POST /queue/{id}/retry` | move a dead message back to the queue (attempts reset) |
-| `GET /openapi.json` | OpenAPI 3 document (no auth) — point Swagger UI at it |
+| `GET /api/health` | liveness (no auth) |
+| `GET /api/metrics` | Prometheus metrics (no auth) |
+| `GET /api/accounts` | list accounts (emails + allowed_from, never hashes) |
+| `POST /api/accounts` | create/update: `{"email","password","allowed_from":[]}` → 201/200 |
+| `PATCH /api/accounts/{email}` | edit an account: replace `allowed_from` and/or set a new `password` (empty/omitted keeps the current one) |
+| `DELETE /api/accounts/{email}` | remove an account |
+| `GET /api/dkim` | list domains + selectors (never the private key) |
+| `POST /api/dkim` | create/update: `{"domain","selector","key_data"}` (PEM) → 201/200 |
+| `DELETE /api/dkim/{domain}` | remove a DKIM key |
+| `GET /api/queue/stats` | `{"queued":N,"due":N,"dead":N}` |
+| `GET /api/queue?status=dead` | list queued/dead messages (no bodies) |
+| `POST /api/queue/{id}/retry` | move a dead message back to the queue (attempts reset) |
+| `GET /api/stats` | dashboard summary: counters + queue gauges + version/uptime |
+| `GET /api/sends?limit=N` | recent sends (ring buffer): subject, status, attempts |
+| `GET /api/sends/{id}` | one send with rendered `html`/`text` + raw source |
+| `POST /api/send` | compose and queue `{"from","to":[],"subject","text","html"}` → 201 |
+| `GET /api/openapi.json` | OpenAPI 3 document (no auth) — point Swagger UI at it |
+
+> The canonical paths are under `/api` (what the dashboard and the Vite dev
+> proxy use). The pre-dashboard routes `/health`, `/metrics`,
+> `/openapi.json`, `/dkim` and `/queue` also keep their legacy root alias;
+> `/accounts` and the dashboard endpoints are **`/api` only** because their
+> root paths are React pages (a direct reload of `/sends` or `/accounts` must
+> load the panel, not API JSON). Messages composed through `POST /api/send`
+> respect the same sender rules as SMTP (the `from` must belong to an account
+> or its `allowed_from`) and land in the same queue, so delivery, DKIM
+> signing and retries behave identically. Recent-sends tracking is an
+> in-memory ring (200 messages, body capped); it resets on restart and never
+> stores credentials.
 
 ```bash
 TOKEN="a-long-random-token"
-BASE="http://127.0.0.1:9090"
+BASE="http://127.0.0.1:8080"
 
 # add a new project account over the air (password hashed server side)
-curl -X POST "$BASE/accounts" -H "Authorization: Bearer $TOKEN" -d '{
+curl -X POST "$BASE/api/accounts" -H "Authorization: Bearer $TOKEN" -d '{
   "email": "project-x@yourdomain.com",
   "password": "s3cr3t",
   "allowed_from": ["news@yourdomain.com"]
 }'
 
 # add its DKIM domain
-curl -X POST "$BASE/dkim" -H "Authorization: Bearer $TOKEN" -d "{
+curl -X POST "$BASE/api/dkim" -H "Authorization: Bearer $TOKEN" -d "{
   \"domain\": \"yourdomain.com\", \"selector\": \"mail\",
   \"key_data\": \"$(sed -z 's/\n/\\n/g' /etc/carteiro/dkim.key)\"
 }"
 
 # monitoring
-curl "$BASE/queue/stats" -H "Authorization: Bearer $TOKEN"
-curl "$BASE/queue?status=dead" -H "Authorization: Bearer $TOKEN"
-curl -X POST "$BASE/queue/20260903T120000.000000000Z-abc/retry" -H "Authorization: Bearer $TOKEN"
+curl "$BASE/api/queue/stats" -H "Authorization: Bearer $TOKEN"
+curl "$BASE/api/queue?status=dead" -H "Authorization: Bearer $TOKEN"
+curl -X POST "$BASE/api/queue/20260903T120000.000000000Z-abc/retry" -H "Authorization: Bearer $TOKEN"
 
 # Prometheus (no auth; scrape only from trusted networks)
 curl "$BASE/metrics"
-```
 
+# compose a message from the panel API (text + html; queued like an SMTP one)
+curl -X POST "$BASE/api/send" -H "Authorization: Bearer $TOKEN" -d '{
+  "from": "news@yourdomain.com", "to": ["client@example.com"],
+  "subject": "Hello", "text": "plain", "html": "<b>rich</b>"
+}'
+```
 The OpenAPI document (`GET /openapi.json`) describes every endpoint, schema
 and the bearer security scheme; point a Swagger UI at it, e.g.
-<https://petstore.swagger.io?url=http://127.0.0.1:9090/openapi.json>.
+<https://petstore.swagger.io?url=http://127.0.0.1:8080/openapi.json>.
 
 Prometheus metrics include counters (`carteiro_messages_queued_total`,
 `carteiro_messages_delivered_total`, `carteiro_messages_dead_total`,
@@ -298,7 +330,7 @@ Which ports the server uses, and when you must care about them:
 |---|---|---|---|
 | **587** | inbound (clients → Carteiro) | SMTP submission: where Nodemailer connects | `CARTEIRO_LISTEN` (default `:587`) |
 | **465** | inbound (optional) | implicit-TLS submission (only with `tls.mode: implicit`) | `listen: ":465"` + `tls` block |
-| **9090** | inbound (admin) | admin REST API, `/health`, `/metrics`, `/openapi.json` | `api.listen` (default `127.0.0.1:9090`, **off** without `api.token`) |
+| **8080** | inbound (web) | web dashboard (React) + admin API, `/health`, `/metrics`, `/openapi.json` | `api.listen` / `CARTEIRO_API_LISTEN` (default `:8080`, **off** without `api.token`) |
 | **25 (outbound)** | outbound (Carteiro → internet) | Carteiro **connects to** the MX servers of recipients; it never listens on 25 | none — but the host/container must be allowed to open outbound port 25 (see the DNS section) |
 
 Practical rules:
@@ -306,10 +338,10 @@ Practical rules:
 - **587** is the only port your applications need. Publish it **only** on a
   private network/VPN, or require TLS (`require_tls: true` + the `tls` block);
   never expose plain-text AUTH on the public internet.
-- **9090** binds to `127.0.0.1` by default. Inside Docker that means it is
-  reachable only within the container: to reach it from the host, either run
-  with host networking or set `CARTEIRO_API_LISTEN=":9090"` **and** keep the
-  port firewalled (or reach it over a VPN / SSH tunnel).
+- **8080** (web panel + admin API) binds all interfaces by default and is
+  protected by the bearer token: every page in the panel and every `/api/*`
+  call needs it (`/health`, `/metrics` and `/openapi.json` stay public). Keep
+  the port firewalled anyway, or reach it over a VPN / SSH tunnel.
 - Changing the SMTP port is just `CARTEIRO_LISTEN=":2525"` (then point
   Nodemailer at 2525); there is no magic in 587/465 besides convention.
 
@@ -336,17 +368,17 @@ if you prefer, and YAML values are overridden by env vars.
 ```bash
 docker run -d --name carteiro \
   -p 587:587 \
-  -p 9090:9090 \
+  -p 8080:8080 \
   -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:a-strong-password' \
   -e CARTEIRO_API_TOKEN='a-long-random-token' \
-  -e CARTEIRO_API_LISTEN=':9090' \   # reach the admin API from the host (loopback by default)
+  -e CARTEIRO_API_LISTEN=':8080' \   # panel + API already default to :8080; the token protects them
   -v carteiro-data:/var/lib/carteiro \
   ghcr.io/itxtoledo/carteiro:latest
 ```
 
 Follow the logs with `docker logs -f carteiro` — you will see the seed
-upsert lines on startup. If you only need the SMTP relay (no API), drop the
-`-p 9090:9090`, `CARTEIRO_API_TOKEN` and `CARTEIRO_API_LISTEN` lines.
+upsert lines on startup. If you only need the SMTP relay (no panel/API), drop the
+`-p 8080:8080`, `CARTEIRO_API_TOKEN` and `CARTEIRO_API_LISTEN` lines.
 
 The image ships a `HEALTHCHECK` that probes the SMTP listener every 30s
 (`docker inspect --format '{{.State.Health.Status}}' carteiro`). Compose can
@@ -354,7 +386,7 @@ override it, e.g. to probe the API instead:
 
 ```yaml
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:9090/health"]
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -452,11 +484,11 @@ services:
   carteiro:
     image: ghcr.io/itxtoledo/carteiro:latest
     restart: unless-stopped
-    ports: ["587:587", "9090:9090"]
+    ports: ["587:587", "8080:8080"]
     environment:
       CARTEIRO_ACCOUNTS: "sender@yourdomain.com:password"
       CARTEIRO_API_TOKEN: "a-long-random-token"
-      CARTEIRO_API_LISTEN: ":9090"   # loopback inside the container otherwise
+      CARTEIRO_API_LISTEN: ":8080"   # panel + API; already the default
     volumes:
       - carteiro-data:/var/lib/carteiro
 volumes:
@@ -817,8 +849,40 @@ docker run -d -p 587:587   -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:password'
 
 ## Development
 
+### Building (production: one binary, no Node)
+
 ```bash
-make build       # builds bin/carteiro
+make web         # cd web && npm ci && npm run build  -> web/dist
+make build       # builds web (if needed) then bin/carteiro with the UI embedded
+make test        # go test ./...
+make vet         # go vet ./...
+make run         # build + run
+make install     # installs binary + default config/data folders
+```
+
+`go build` (and `go test`) compile out of the box: the committed placeholder
+under `web/dist` satisfies the `go:embed` directive; `make build`, Docker and
+CI replace it with the real Vite output before compiling.
+
+### Developing the dashboard (hot reload)
+
+The UI iterates with Vite against the running Go server — no embed rebuild:
+
+```bash
+# terminal 1: the relay (HTTP panel + API on :8080, SMTP on :587)
+go run ./cmd/carteiro
+
+# terminal 2: Vite on :5173, proxying /api to 127.0.0.1:8080
+make web-dev
+```
+
+Open http://localhost:5173 (frontend sources live in `web/`; the compiled
+React app in `web/dist` is served by the binary at `http://localhost:8080`).
+
+### Toolbox
+
+```bash
+make build       # web + go build -> bin/carteiro
 make test        # go test ./...
 make vet         # go vet ./...
 make run         # build + run
@@ -834,8 +898,11 @@ internal/storage/     database layer: sqlite + mysql, queue, accounts, dkim
 internal/smtpd/       SMTP submission server (AUTH, DATA, STARTTLS)
 internal/relay/       MX delivery (retry/backoff, dead-letter)
 internal/dkim/        DKIM signing (RSA/Ed25519)
-internal/api/         admin REST API (bearer) + queue monitoring
+internal/api/         admin REST API + dashboard endpoints (bearer)
+internal/sends/       recent-sends ring + message parse/build (panel feed)
+internal/webui/       embedded SPA handler (web/dist via go:embed)
 internal/metrics/     Prometheus counters
+web/                  React + Vite + Tailwind dashboard (src -> dist)
 systemd/              example unit
 .github/workflows/    multi-arch image build (amd64+arm64 -> GHCR)
 ```

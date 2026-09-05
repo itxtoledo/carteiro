@@ -433,8 +433,17 @@ func (c *smtpConn) handleData() {
 
 	id := storage.NewID(time.Now())
 	msg := c.receivedHeader(id) + string(data)
-	qid, err := s.store.EnqueueWithID(id, c.from, c.rcpts, []byte(msg))
+	raw := []byte(msg)
+	// Record before the DB insert so a fast delivery can never race ahead of
+	// the recent-sends feed; the entry is dropped if the enqueue fails.
+	if s.rec != nil {
+		s.rec.Add(id, c.from, c.rcpts, raw)
+	}
+	qid, err := s.store.EnqueueWithID(id, c.from, c.rcpts, raw)
 	if err != nil {
+		if s.rec != nil {
+			s.rec.Drop(id)
+		}
 		c.s.log.Error("failed to queue message", "conn", c.id, "err", err)
 		c.reply(451, "4.3.0 Internal error while queueing; please retry")
 		c.reset(true)

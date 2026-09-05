@@ -17,6 +17,7 @@ import (
 
 	"carteiro/internal/config"
 	"carteiro/internal/metrics"
+	"carteiro/internal/sends"
 	"carteiro/internal/storage"
 )
 
@@ -26,6 +27,7 @@ type Server struct {
 	store   *storage.Store
 	log     *slog.Logger
 	metrics *metrics.Metrics
+	rec     *sends.Recorder
 	tlsCfg  *tls.Config
 
 	ln net.Listener
@@ -36,9 +38,11 @@ type Server struct {
 }
 
 // New validates the configured TLS and prepares the server. Certificates
-// always come from the decoded base64 PEM texts in cfg.TLS (no files).
-func New(cfg *config.Config, store *storage.Store, log *slog.Logger, m *metrics.Metrics) (*Server, error) {
-	s := &Server{cfg: cfg, store: store, log: log, metrics: m}
+// always come from the decoded base64 PEM texts in cfg.TLS (no files). rec
+// receives every accepted message for the web panel's recent-sends feed (may
+// be nil).
+func New(cfg *config.Config, store *storage.Store, log *slog.Logger, m *metrics.Metrics, rec *sends.Recorder) (*Server, error) {
+	s := &Server{cfg: cfg, store: store, log: log, metrics: m, rec: rec}
 	if cfg.TLS != nil {
 		cert, err := tls.X509KeyPair([]byte(cfg.TLS.CertPEM), []byte(cfg.TLS.KeyPEM))
 		if err != nil {

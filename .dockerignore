@@ -1,8 +1,5 @@
 .git
-.gitignore
-bin/
-data/
-*.md
-docker-compose.yml
-.github/
-Makefile
+bin
+data
+web/node_modules
+web/dist

@@ -4,3 +4,11 @@
 *.out
 .env
 data/
+
+# React dashboard: source is committed, build output and dependencies are not.
+# The placeholder files under web/dist ARE committed so the go:embed directive
+# keeps compiling on machines without a Node toolchain.
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+!web/dist/index.html

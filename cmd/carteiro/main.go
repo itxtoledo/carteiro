@@ -22,6 +22,7 @@ import (
 	"carteiro/internal/logmask"
 	"carteiro/internal/metrics"
 	"carteiro/internal/relay"
+	"carteiro/internal/sends"
 	"carteiro/internal/smtpd"
 	"carteiro/internal/storage"
 )
@@ -72,11 +73,15 @@ func run() error {
 	}
 
 	counters := &metrics.Metrics{}
-	server, err := smtpd.New(cfg, store, logger, counters)
+	// rec powers the web panel's recent-sends feed (list, rendered bodies and
+	// live delivery status). It is an in-memory ring: the database queue
+	// remains the source of truth for delivery.
+	rec := sends.New(200, 512<<10)
+	server, err := smtpd.New(cfg, store, logger, counters, rec)
 	if err != nil {
 		return err
 	}
-	deliverer, err := relay.New(cfg, store, logger, counters)
+	deliverer, err := relay.New(cfg, store, logger, counters, rec)
 	if err != nil {
 		return err
 	}
@@ -90,7 +95,7 @@ func run() error {
 		"log_level", cfg.LogLevel,
 	)
 	if cfg.API != nil {
-		logger.Info("admin api enabled", "listen", cfg.API.Listen)
+		logger.Info("web panel and admin api enabled", "listen", cfg.API.Listen)
 	}
 	if cfg.InsecureAuthMsg != "" {
 		logger.Warn(cfg.InsecureAuthMsg)
@@ -106,10 +111,10 @@ func run() error {
 
 	var apiServer *api.Server
 	if cfg.API != nil {
-		apiServer = api.New(cfg.API, store, logger, counters)
+		apiServer = api.New(cfg.API, store, logger, counters, rec, version, cfg.MaxMessageSize, cfg.MaxRecipients)
 		go func() {
 			if err := apiServer.Serve(); err != nil {
-				serveErr <- fmt.Errorf("admin api: %w", err)
+				serveErr <- fmt.Errorf("web panel and admin api: %w", err)
 			}
 		}()
 	}

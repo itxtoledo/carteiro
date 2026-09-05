@@ -138,6 +138,39 @@ func (s *Store) DeleteAccount(email string) error {
 	return err
 }
 
+// UpdateAccount edits an existing account over the air: it replaces the
+// allowed_from list (always normalized to include the account email) and, when
+// newPassword is non-empty, sets a new bcrypt hash. It fails if the account
+// does not exist.
+func (s *Store) UpdateAccount(email string, allowedFrom []string, newPassword string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if _, ok, err := s.GetAccount(email); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("account %s not found", email)
+	}
+	allowed := normalizeAllowed(email, allowedFrom)
+	ctx := context.Background()
+	if newPassword != "" {
+		hash, err := HashPassword(newPassword)
+		if err != nil {
+			return fmt.Errorf("account %s: %w", email, err)
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE accounts SET allowed_from = ?, password_hash = ? WHERE email = ?`,
+			toJSON(allowed), hash, email); err != nil {
+			return fmt.Errorf("updating account %s: %w", email, err)
+		}
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE accounts SET allowed_from = ? WHERE email = ?`,
+		toJSON(allowed), email); err != nil {
+		return fmt.Errorf("updating account %s: %w", email, err)
+	}
+	return nil
+}
+
 // AllowsFrom reports whether the account may use the envelope address from.
 func (a *Account) AllowsFrom(from string) bool {
 	from = strings.ToLower(strings.TrimSpace(from))

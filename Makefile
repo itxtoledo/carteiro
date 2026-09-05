@@ -1,9 +1,17 @@
 BINARY := bin/carteiro
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build run test vet fmt clean install
+# The UI is embedded into the binary (go:embed), so every release build runs
+# `web` first. The Docker build and the CI release workflow do the same.
+.PHONY: web web-dev build run test vet fmt clean install
 
-build:
+web:
+	cd web && npm ci && npm run build
+
+web-dev:
+	cd web && npm run dev
+
+build: web
 	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BINARY) ./cmd/carteiro
 
 run: build

@@ -45,7 +45,7 @@ func startServer(t *testing.T, mutate func(c *config.Config)) (*Server, *storage
 		mutate(cfg)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv, err := New(cfg, store, logger, &metrics.Metrics{})
+	srv, err := New(cfg, store, logger, &metrics.Metrics{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
