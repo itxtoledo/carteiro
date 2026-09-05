@@ -328,21 +328,36 @@ func TestAPIValidation(t *testing.T) {
 	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "token") {
 		t.Fatalf("expected missing-token error, got %v", err)
 	}
-	// A single token defaults the listen address and is kept plain (not
-	// hashed). The default binds all interfaces (:8080) so the web panel is
-	// reachable from outside a container; the token is the only gate.
+	// The API defaults to loopback :9090; the web panel is enabled alongside
+	// it and defaults to :8080 (all interfaces, token-protected).
 	p2 := writeTemp(t, "api:\n  token: \"tok-1\"\n")
 	cfg, err := Load(p2)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.API.Listen != ":8080" {
+	if cfg.API.Listen != "127.0.0.1:9090" {
 		t.Errorf("default api listen = %q", cfg.API.Listen)
+	}
+	if cfg.Web == nil || cfg.Web.Listen != ":8080" {
+		t.Errorf("default web listen = %+v", cfg.Web)
 	}
 	if cfg.API.Token != "tok-1" {
 		t.Errorf("token wrong: %q", cfg.API.Token)
 	}
-	// Env token (singular).
+	// The web listener is separately configurable (YAML web.listen).
+	p3 := writeTemp(t, `api:
+  token: "tok-1"
+web:
+  listen: ":9095"
+`)
+	cfgW, err := Load(p3)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfgW.Web.Listen != ":9095" || cfgW.API.Listen != "127.0.0.1:9090" {
+		t.Errorf("separate web/api listens wrong: %+v / %+v", cfgW.Web, cfgW.API)
+	}
+	// Env token + api listen.
 	t.Setenv("CARTEIRO_API_TOKEN", "env-tok")
 	t.Setenv("CARTEIRO_API_LISTEN", "127.0.0.1:9191")
 	cfg2, err := Load("")
@@ -352,25 +367,32 @@ func TestAPIValidation(t *testing.T) {
 	if cfg2.API.Listen != "127.0.0.1:9191" || cfg2.API.Token != "env-tok" {
 		t.Errorf("env api config wrong: %+v", cfg2.API)
 	}
-	// HTTP_ADDR is an accepted alias for the panel listener (the token still
-	// comes from CARTEIRO_API_TOKEN).
+	// HTTP_ADDR configures the WEB panel, not the API (the token still comes
+	// from CARTEIRO_API_TOKEN).
 	os.Unsetenv("CARTEIRO_API_LISTEN")
 	t.Setenv("HTTP_ADDR", ":9090")
 	cfg3, err := Load("")
 	if err != nil {
 		t.Fatalf("Load (HTTP_ADDR): %v", err)
 	}
-	if cfg3.API.Listen != ":9090" || cfg3.API.Token != "env-tok" {
-		t.Errorf("HTTP_ADDR alias wrong: %+v", cfg3.API)
+	if cfg3.API.Listen != "127.0.0.1:9090" || cfg3.Web.Listen != ":9090" || cfg3.API.Token != "env-tok" {
+		t.Errorf("HTTP_ADDR alias wrong: api=%+v web=%+v", cfg3.API, cfg3.Web)
 	}
 	os.Unsetenv("HTTP_ADDR")
-	t.Setenv("CARTEIRO_HTTP_ADDR", ":9091")
+	t.Setenv("CARTEIRO_WEB_LISTEN", ":9091")
 	cfg4, err := Load("")
 	if err != nil {
-		t.Fatalf("Load (CARTEIRO_HTTP_ADDR): %v", err)
+		t.Fatalf("Load (CARTEIRO_WEB_LISTEN): %v", err)
 	}
-	if cfg4.API.Listen != ":9091" {
-		t.Errorf("CARTEIRO_HTTP_ADDR alias wrong: %+v", cfg4.API)
+	if cfg4.Web.Listen != ":9091" {
+		t.Errorf("CARTEIRO_WEB_LISTEN wrong: %+v", cfg4.Web)
+	}
+	// A web listener without an API token is rejected.
+	os.Unsetenv("CARTEIRO_API_TOKEN")
+	os.Unsetenv("CARTEIRO_WEB_LISTEN")
+	t.Setenv("CARTEIRO_WEB_LISTEN", ":8080")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "token") {
+		t.Fatalf("expected missing-token error for web-only, got %v", err)
 	}
 }
 
@@ -548,4 +570,49 @@ func TestTLSValidationErrors(t *testing.T) {
 		t.Fatal("expected an error for a mismatched certificate/key pair")
 	}
 
+}
+
+func TestBarePortListenIsNormalized(t *testing.T) {
+	configViaEnvIsolada(t)
+	// A bare port in the SMTP listener env is normalized to host:port.
+	t.Setenv("CARTEIRO_LISTEN", "2525")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Listen != ":2525" {
+		t.Errorf("bare SMTP port = %q, want \":2525\"", cfg.Listen)
+	}
+
+	// Bare ports for the admin API listener env.
+	os.Unsetenv("CARTEIRO_LISTEN")
+	t.Setenv("CARTEIRO_API_TOKEN", "tok")
+	t.Setenv("CARTEIRO_API_LISTEN", "8080")
+	cfg2, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg2.API.Listen != ":8080" {
+		t.Errorf("bare api port = %q, want \":8080\"", cfg2.API.Listen)
+	}
+
+	// Bare ports for the web panel env (CARTEIRO_WEB_LISTEN and HTTP_ADDR).
+	os.Unsetenv("CARTEIRO_API_LISTEN")
+	t.Setenv("CARTEIRO_WEB_LISTEN", "9091")
+	cfg3, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg3.Web.Listen != ":9091" {
+		t.Errorf("bare web port via CARTEIRO_WEB_LISTEN = %q", cfg3.Web.Listen)
+	}
+	os.Unsetenv("CARTEIRO_WEB_LISTEN")
+	t.Setenv("HTTP_ADDR", "9092")
+	cfg4, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg4.Web.Listen != ":9092" {
+		t.Errorf("bare web port via HTTP_ADDR = %q", cfg4.Web.Listen)
+	}
 }

@@ -136,10 +136,19 @@ type QueueCfg struct {
 
 // API configures the administrative REST API. Token is a single plain-text
 // bearer token; it is intentionally NOT stored in the database - only the
-// server owner sees it (config file or environment).
+// server owner sees it (config file or environment). The API and the web
+// panel listen on SEPARATE ports (see Web); the panel proxies /api/* to this
+// listener internally.
 type API struct {
 	Listen string `yaml:"listen"`
 	Token  string `yaml:"token"`
+}
+
+// Web configures the dashboard listener (SPA + in-process proxy of /api/* to
+// the admin API). It is enabled automatically whenever the admin API is
+// configured; listen defaults to :8080.
+type Web struct {
+	Listen string `yaml:"listen"`
 }
 
 // Account is a seed account (login + password in plain text). Seeds are
@@ -177,6 +186,7 @@ type Config struct {
 	LogMaskEmails   bool     `yaml:"log_mask_emails"`
 
 	API      *API      `yaml:"api"`
+	Web      *Web      `yaml:"web"`
 	Queue    QueueCfg  `yaml:"queue"`
 	TLS      *TLS      `yaml:"tls"`
 	Delivery Delivery  `yaml:"delivery"`
@@ -428,20 +438,8 @@ func applyEnv(c *Config) error {
 			c.Accounts = append(c.Accounts, Account{Email: strings.TrimSpace(email), Password: password})
 		}
 	}
-	// The web panel + admin API listen address. CARTEIRO_API_LISTEN wins;
-	// HTTP_ADDR / CARTEIRO_HTTP_ADDR are accepted aliases for the same knob
-	// (kept for the dashboard convention of a single HTTP_ADDR variable).
+	// Admin API listener (separate from the web panel; see Web below).
 	if v := os.Getenv("CARTEIRO_API_LISTEN"); v != "" {
-		if c.API == nil {
-			c.API = &API{}
-		}
-		c.API.Listen = v
-	} else if v := os.Getenv("CARTEIRO_HTTP_ADDR"); v != "" {
-		if c.API == nil {
-			c.API = &API{}
-		}
-		c.API.Listen = v
-	} else if v := os.Getenv("HTTP_ADDR"); v != "" {
 		if c.API == nil {
 			c.API = &API{}
 		}
@@ -452,6 +450,24 @@ func applyEnv(c *Config) error {
 			c.API = &API{}
 		}
 		c.API.Token = v
+	}
+	// Web panel listener. HTTP_ADDR / CARTEIRO_HTTP_ADDR are accepted aliases
+	// for CARTEIRO_WEB_LISTEN (they configure the panel, not the API).
+	if v := os.Getenv("CARTEIRO_WEB_LISTEN"); v != "" {
+		if c.Web == nil {
+			c.Web = &Web{}
+		}
+		c.Web.Listen = v
+	} else if v := os.Getenv("CARTEIRO_HTTP_ADDR"); v != "" {
+		if c.Web == nil {
+			c.Web = &Web{}
+		}
+		c.Web.Listen = v
+	} else if v := os.Getenv("HTTP_ADDR"); v != "" {
+		if c.Web == nil {
+			c.Web = &Web{}
+		}
+		c.Web.Listen = v
 	}
 	if err := applyDKIMEnv(c); err != nil {
 		return err
@@ -511,9 +527,23 @@ func decodeBase64Key(v string) (string, error) {
 	return string(decoded), nil
 }
 
+// normalizeListen accepts both "host:port" and a bare port number ("8080"),
+// which is normalized to ":8080" (all interfaces). Listen values come from
+// env vars that operators often fill with just a port.
+func normalizeListen(v string) string {
+	v = strings.TrimSpace(v)
+	if v != "" {
+		if _, err := strconv.Atoi(v); err == nil {
+			return ":" + v
+		}
+	}
+	return v
+}
+
 func (c *Config) normalizeAndValidate() error {
+	c.Listen = normalizeListen(c.Listen)
 	if _, _, err := net.SplitHostPort(c.Listen); err != nil {
-		return fmt.Errorf("invalid listen %q (use host:port, e.g. \":587\"): %w", c.Listen, err)
+		return fmt.Errorf("invalid listen %q (use host:port, e.g. \":587\") or a bare port: %w", c.Listen, err)
 	}
 	if c.TLS != nil {
 		switch c.TLS.Mode {
@@ -554,14 +584,30 @@ func (c *Config) normalizeAndValidate() error {
 			return fmt.Errorf("api requires a token (api.token or CARTEIRO_API_TOKEN)")
 		}
 		c.API.Token = strings.TrimSpace(c.API.Token)
+		c.API.Listen = normalizeListen(c.API.Listen)
 		if strings.TrimSpace(c.API.Listen) == "" {
-			// The dashboard + admin API share this listener; :8080 binds all
-			// interfaces so the panel is reachable from outside a container.
-			c.API.Listen = ":8080"
+			// Loopback by default: the panel proxies to this listener inside
+			// the process/container, so the API does not need to be public.
+			c.API.Listen = "127.0.0.1:9090"
 		}
 		if _, _, err := net.SplitHostPort(c.API.Listen); err != nil {
 			return fmt.Errorf("invalid api.listen %q: %w", c.API.Listen, err)
 		}
+
+		// The web panel follows the admin API and binds all interfaces by
+		// default so the dashboard is reachable from outside a container.
+		if c.Web == nil {
+			c.Web = &Web{}
+		}
+		c.Web.Listen = normalizeListen(c.Web.Listen)
+		if strings.TrimSpace(c.Web.Listen) == "" {
+			c.Web.Listen = ":8080"
+		}
+		if _, _, err := net.SplitHostPort(c.Web.Listen); err != nil {
+			return fmt.Errorf("invalid web.listen %q: %w", c.Web.Listen, err)
+		}
+	} else if c.Web != nil {
+		return fmt.Errorf("the web panel needs the admin API: set api.token / CARTEIRO_API_TOKEN (web.listen alone is not enough)")
 	}
 
 	// Normalize seed accounts (emails lowercased, last duplicate wins so env

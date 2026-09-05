@@ -18,7 +18,8 @@ services:
     restart: unless-stopped
     ports:
       - "587:587"      # SMTP submission
-      - "8080:8080"    # web dashboard + admin API (bind to 127.0.0.1 on the host if possible)
+      - "8080:8080"    # web dashboard (bind to 127.0.0.1 on the host if possible)
+      - "9090:9090"    # admin API (loopback by default -> set CARTEIRO_API_LISTEN=:9090)
     environment:
       # Seed account (upserted on startup, logged clearly):
       CARTEIRO_ACCOUNTS: "sender@yourdomain.com:AVERYSTRONGPASSWORD"
@@ -30,7 +31,8 @@ services:
       # Admin API bearer token, singular (never stored in the DB) — also the
       # web panel login:
       CARTEIRO_API_TOKEN: "CHANGE-ME-a-long-random-token"
-      # CARTEIRO_API_LISTEN: ":8080"   # panel + API (default)
+      # CARTEIRO_WEB_LISTEN: ":8080"   # web panel (default)
+      # CARTEIRO_API_LISTEN: ":9090"   # admin API, loopback by default
       # CARTEIRO_REQUIRE_TLS: "false"
     volumes:
       - carteiro-data:/var/lib/carteiro

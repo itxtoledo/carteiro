@@ -1,11 +1,11 @@
 // Package api implements the HTTP surface of Carteiro: the administrative
 // REST API (bearer token from config/env only, never stored), queue
-// monitoring, Prometheus metrics and the embedded web dashboard. Through it,
-// accounts, allowed senders and DKIM domains are added and removed over the
-// air, and messages can be composed straight into the queue. The API and the
-// dashboard share one listener and one origin; the canonical endpoint paths
-// live under /api/* (a few pre-dashboard routes keep their legacy root
-// alias).
+// monitoring, Prometheus metrics. Through it, accounts, allowed senders and
+// DKIM domains are added and removed over the air, and messages can be
+// composed straight into the queue. The admin API listens on its OWN port
+// (api.listen); the web dashboard runs on a separate listener (see panel.go)
+// and proxies /api/* here in-process. The canonical endpoint paths live under
+// /api/* (a few pre-dashboard routes keep their legacy root alias).
 package api
 
 import (
@@ -25,10 +25,9 @@ import (
 	"carteiro/internal/metrics"
 	"carteiro/internal/sends"
 	"carteiro/internal/storage"
-	"carteiro/internal/webui"
 )
 
-// Server is the API + dashboard server.
+// Server is the admin API server (its own listener, no SPA).
 type Server struct {
 	store          *storage.Store
 	token          string
@@ -60,14 +59,12 @@ func New(cfg *config.API, store *storage.Store, log *slog.Logger, m *metrics.Met
 		s.maxRecipients = 100
 	}
 
+	// This listener is the ADMIN API only. Legacy root aliases (health,
+	// metrics, openapi, dkim, queue) coexist with the canonical /api/* set;
+	// unknown paths 404 (the SPA lives on the separate web listener).
 	mux := http.NewServeMux()
-	// Legacy root aliases (only for paths that do not shadow a React route)
-	// plus the canonical /api/* set the dashboard uses, then the SPA
-	// fallback: ServeMux gives the specific API routes precedence over "/",
-	// so /api/* is never swallowed by the panel.
 	s.registerRoutes(mux, "", true)
 	s.registerRoutes(mux, "/api", false)
-	mux.Handle("/", webui.Handler())
 
 	s.handler = mux
 	s.http = &http.Server{
@@ -136,7 +133,7 @@ func (s *Server) Handler() http.Handler { return s.handler }
 
 // Serve blocks serving until Shutdown is called.
 func (s *Server) Serve() error {
-	s.log.Info("web panel and admin api listening", "addr", s.http.Addr)
+	s.log.Info("admin api listening", "addr", s.http.Addr)
 	if err := s.http.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

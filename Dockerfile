@@ -43,8 +43,10 @@ WORKDIR /var/lib/carteiro
 VOLUME ["/var/lib/carteiro"]
 
 EXPOSE 587
-# Web dashboard + admin API (one listener; needs CARTEIRO_API_TOKEN).
+# Web dashboard (SPA; needs CARTEIRO_API_TOKEN).
 EXPOSE 8080
+# Admin API (loopback by default; set CARTEIRO_API_LISTEN=:9090 to expose).
+EXPOSE 9090
 
 # Health: TCP probe against the SMTP listener (always up). For a deeper
 # probe, point a healthcheck at GET /health of the web/api listener instead.

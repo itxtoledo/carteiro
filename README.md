@@ -105,8 +105,10 @@ Environment equivalents: `CARTEIRO_STORAGE_TYPE`, `CARTEIRO_SQLITE_PATH`,
 ### Web panel + API token (plain text, config only)
 
 ```yaml
-api:
-  listen: ":8080"              # web dashboard + admin API (default :8080)
+api:                          # admin REST API (separate port)
+  listen: "127.0.0.1:9090"    # loopback by default
+web:                          # web dashboard (React SPA)
+  listen: ":8080"
   token: "a-long-random-token"
 ```
 
@@ -118,13 +120,14 @@ stays **off** until the token is configured.
 
 | Variable | Default | Description |
 |---|---|---|
-| `CARTEIRO_LISTEN` | `:587` | submission server address |
+| `CARTEIRO_LISTEN` | `:587` | submission server address (a bare port like `587` is accepted and normalized) |
 | `CARTEIRO_HOSTNAME` | machine hostname | name used in EHLO/banner (should match the PTR) |
 | `CARTEIRO_STORAGE_TYPE` | `sqlite` | `sqlite` or `mysql` |
 | `CARTEIRO_SQLITE_PATH` | OS default | SQLite database file |
 | `CARTEIRO_DB_DSN` | — | MySQL DSN (implies `type: mysql`) |
-| `CARTEIRO_API_LISTEN` | `:8080` | web panel + admin API address (`HTTP_ADDR` accepted as alias; off without a token) |
-| `HTTP_ADDR` / `CARTEIRO_HTTP_ADDR` | — | aliases for `CARTEIRO_API_LISTEN` (panel + API listener) |
+| `CARTEIRO_API_LISTEN` | `127.0.0.1:9090` | admin API address (loopback by default; a bare port like `9090` works; off without a token) |
+| `CARTEIRO_WEB_LISTEN` | `:8080` | web dashboard listener (a bare port like `8080` works) |
+| `HTTP_ADDR` / `CARTEIRO_HTTP_ADDR` | — | aliases for `CARTEIRO_WEB_LISTEN` (the panel, not the API) |
 | `CARTEIRO_API_TOKEN` | — | single bearer token (enables the admin API) |
 | `CARTEIRO_ACCOUNTS` | — | seed accounts `email:password` separated by `;` |
 | `CARTEIRO_DKIM_KEYS` | — | DKIM seeds: `doma.com:mail:<b64>;domb.com:selB:<b64>` (`;` separated, each key is the base64 of the whole PEM file) |
@@ -233,15 +236,19 @@ material; only the DNS record above is meant to be public.
 
 The repository ships a small **React dashboard** (Vite + Tailwind, AWS/GCP
 console style, dark/light) that is compiled and **embedded into the binary**
-(`go:embed`): one process, one port, no Node.js at runtime. It talks only to
+(`go:embed`): one process, no Node.js at runtime (the SPA and the API listen on separate ports). It talks only to
 the API below using the same bearer token. Pages: **Dashboard** (counters,
 queue gauges, recent activity), **Compose** (send an e-mail straight into the
 queue), **Sends** (history with rendered HTML/text previews and live delivery
 status) and **Accounts** (add/remove SMTP users). The SPA is served at `/`;
 open `http://<host>:8080/` and log in with the API token.
 
-The dashboard + admin API share one HTTP listener (default `:8080`), **off** until a token
-is configured. Every call except `/health` and `/metrics` needs
+The admin API (`api.listen`, loopback `127.0.0.1:9090` by default) and the web
+dashboard (`web.listen`, `:8080` by default) listen on **separate ports** in
+the same process. The panel serves the SPA and **proxies `/api/*` to the API
+listener in-process**, so the browser keeps one origin while the API stays
+independently bindable and reachable. Both are **off** until a token is
+configured. Every call except `/health` and `/metrics` needs
 `Authorization: Bearer <token>`.
 
 | Endpoint | Description |
@@ -264,12 +271,12 @@ is configured. Every call except `/health` and `/metrics` needs
 | `POST /api/send` | compose and queue `{"from","to":[],"subject","text","html"}` → 201 |
 | `GET /api/openapi.json` | OpenAPI 3 document (no auth) — point Swagger UI at it |
 
-> The canonical paths are under `/api` (what the dashboard and the Vite dev
-> proxy use). The pre-dashboard routes `/health`, `/metrics`,
-> `/openapi.json`, `/dkim` and `/queue` also keep their legacy root alias;
-> `/accounts` and the dashboard endpoints are **`/api` only** because their
-> root paths are React pages (a direct reload of `/sends` or `/accounts` must
-> load the panel, not API JSON). Messages composed through `POST /api/send`
+> The canonical paths are under `/api`. The pre-dashboard routes `/health`,
+> `/metrics`, `/openapi.json`, `/dkim` and `/queue` also keep their legacy
+> root alias; `/accounts` and the dashboard endpoints are **`/api` only**.
+> The React pages live on the **web port** and the API on its **own port**
+> (the panel proxies `/api/*` to it); opening the API port directly never
+> returns the SPA. Messages composed through `POST /api/send`
 > respect the same sender rules as SMTP (the `from` must belong to an account
 > or its `allowed_from`) and land in the same queue, so delivery, DKIM
 > signing and retries behave identically. Recent-sends tracking is an
@@ -330,7 +337,8 @@ Which ports the server uses, and when you must care about them:
 |---|---|---|---|
 | **587** | inbound (clients → Carteiro) | SMTP submission: where Nodemailer connects | `CARTEIRO_LISTEN` (default `:587`) |
 | **465** | inbound (optional) | implicit-TLS submission (only with `tls.mode: implicit`) | `listen: ":465"` + `tls` block |
-| **8080** | inbound (web) | web dashboard (React) + admin API, `/health`, `/metrics`, `/openapi.json` | `api.listen` / `CARTEIRO_API_LISTEN` (default `:8080`, **off** without `api.token`) |
+| **8080** | inbound (web) | web dashboard (React SPA; proxies `/api/*` to the API port) | `web.listen` / `CARTEIRO_WEB_LISTEN` / `HTTP_ADDR` (default `:8080`, **off** without `api.token`) |
+| **9090** | inbound (admin) | admin REST API `/api/*` + legacy `/health`, `/metrics`, `/openapi.json`, `/dkim`, `/queue` | `api.listen` / `CARTEIRO_API_LISTEN` (default `127.0.0.1:9090`, **off** without `api.token`) |
 | **25 (outbound)** | outbound (Carteiro → internet) | Carteiro **connects to** the MX servers of recipients; it never listens on 25 | none — but the host/container must be allowed to open outbound port 25 (see the DNS section) |
 
 Practical rules:
@@ -338,10 +346,14 @@ Practical rules:
 - **587** is the only port your applications need. Publish it **only** on a
   private network/VPN, or require TLS (`require_tls: true` + the `tls` block);
   never expose plain-text AUTH on the public internet.
-- **8080** (web panel + admin API) binds all interfaces by default and is
-  protected by the bearer token: every page in the panel and every `/api/*`
-  call needs it (`/health`, `/metrics` and `/openapi.json` stay public). Keep
-  the port firewalled anyway, or reach it over a VPN / SSH tunnel.
+- **8080** (web panel) binds all interfaces by default. The panel is
+  protected by the bearer token (login screen); `/api/*` calls are proxied to
+  the API port with the same header. Keep the port firewalled anyway, or
+  reach it over a VPN / SSH tunnel.
+- **9090** (admin API) binds to `127.0.0.1` by default: inside a container it
+  is only reachable by the panel's in-process proxy. To call it from the host
+  or external tools, set `CARTEIRO_API_LISTEN=":9090"` and publish the port
+  (firewalled).
 - Changing the SMTP port is just `CARTEIRO_LISTEN=":2525"` (then point
   Nodemailer at 2525); there is no magic in 587/465 besides convention.
 
@@ -369,16 +381,17 @@ if you prefer, and YAML values are overridden by env vars.
 docker run -d --name carteiro \
   -p 587:587 \
   -p 8080:8080 \
+  -p 9090:9090 \
   -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:a-strong-password' \
   -e CARTEIRO_API_TOKEN='a-long-random-token' \
-  -e CARTEIRO_API_LISTEN=':8080' \   # panel + API already default to :8080; the token protects them
+  -e CARTEIRO_API_LISTEN=':9090' \   # reach the admin API from the host (loopback by default)
   -v carteiro-data:/var/lib/carteiro \
   ghcr.io/itxtoledo/carteiro:latest
 ```
 
 Follow the logs with `docker logs -f carteiro` — you will see the seed
 upsert lines on startup. If you only need the SMTP relay (no panel/API), drop the
-`-p 8080:8080`, `CARTEIRO_API_TOKEN` and `CARTEIRO_API_LISTEN` lines.
+`-p 8080:8080`, `-p 9090:9090`, `CARTEIRO_API_TOKEN` and the listen lines.
 
 The image ships a `HEALTHCHECK` that probes the SMTP listener every 30s
 (`docker inspect --format '{{.State.Health.Status}}' carteiro`). Compose can
@@ -386,7 +399,7 @@ override it, e.g. to probe the API instead:
 
 ```yaml
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/health"]
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:9090/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -484,11 +497,11 @@ services:
   carteiro:
     image: ghcr.io/itxtoledo/carteiro:latest
     restart: unless-stopped
-    ports: ["587:587", "8080:8080"]
+    ports: ["587:587", "8080:8080", "9090:9090"]
     environment:
       CARTEIRO_ACCOUNTS: "sender@yourdomain.com:password"
       CARTEIRO_API_TOKEN: "a-long-random-token"
-      CARTEIRO_API_LISTEN: ":8080"   # panel + API; already the default
+      CARTEIRO_API_LISTEN: ":9090"   # admin API (loopback by default)
     volumes:
       - carteiro-data:/var/lib/carteiro
 volumes:
@@ -869,7 +882,7 @@ CI replace it with the real Vite output before compiling.
 The UI iterates with Vite against the running Go server — no embed rebuild:
 
 ```bash
-# terminal 1: the relay (HTTP panel + API on :8080, SMTP on :587)
+# terminal 1: the relay (web panel :8080, admin API on loopback :9090, SMTP :587)
 go run ./cmd/carteiro
 
 # terminal 2: Vite on :5173, proxying /api to 127.0.0.1:8080
@@ -877,7 +890,8 @@ make web-dev
 ```
 
 Open http://localhost:5173 (frontend sources live in `web/`; the compiled
-React app in `web/dist` is served by the binary at `http://localhost:8080`).
+React app in `web/dist` is served by the binary at `http://localhost:8080`
+and proxies `/api` to the API listener on `127.0.0.1:9090`).
 
 ### Toolbox
 

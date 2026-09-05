@@ -229,7 +229,7 @@ func strconvQuote(s string) string {
 	return string(b)
 }
 
-func TestRoutesAlsoExposedUnderAPIPrefix(t *testing.T) {
+func TestAPIRoutesPublicAndProtected(t *testing.T) {
 	ts := newTestAPI(t)
 	// Public endpoints exist under /api and at the legacy root.
 	for _, path := range []string{"/api/health", "/health", "/api/openapi.json"} {
@@ -237,26 +237,21 @@ func TestRoutesAlsoExposedUnderAPIPrefix(t *testing.T) {
 			t.Errorf("GET %s status = %d, want 200", path, r.StatusCode)
 		}
 	}
-	// Protected endpoints exist under /api and still require the token; the
-	// pre-dashboard /queue/* alias also keeps working.
-	for _, tc := range []string{"/api/stats", "/api/sends", "/api/accounts", "/queue/stats"} {
+	// Protected endpoints require the token; the pre-dashboard /queue/* root
+	// alias also keeps working.
+	for _, tc := range []string{"/api/stats", "/api/sends", "/api/accounts", "/queue/stats", "/queue"} {
 		if r := do(t, "GET", ts.URL+tc, "", ""); r.StatusCode != http.StatusUnauthorized {
 			t.Errorf("GET %s without token: status = %d, want 401", tc, r.StatusCode)
 		}
 	}
-	// SPA client routes that collide with old root API paths now serve the
-	// shell (direct navigation / refresh must not answer API JSON).
-	for _, page := range []string{"/accounts", "/sends", "/sends/some-id", "/compose", "/some/spa/route"} {
-		r := do(t, "GET", ts.URL+page, "", "")
-		if r.StatusCode != 200 {
-			t.Errorf("SPA route %s status = %d, want 200", page, r.StatusCode)
-		}
-		raw, _ := io.ReadAll(r.Body)
-		if !strings.Contains(strings.ToLower(string(raw)), "<!doctype html") {
-			t.Errorf("SPA route %s did not return the shell", page)
+	// The admin API listener is API-only: it does NOT serve the SPA. React
+	// pages and unknown paths 404 here (they live on the web panel port).
+	for _, page := range []string{"/", "/accounts", "/sends", "/compose", "/some/spa/route"} {
+		if r := do(t, "GET", ts.URL+page, "", ""); r.StatusCode != http.StatusNotFound {
+			t.Errorf("API GET %s status = %d, want 404 (SPA is on the web port)", page, r.StatusCode)
 		}
 	}
-	// The SPA never swallows unknown /api paths.
+	// Unknown /api paths 404 as well.
 	if r := do(t, "GET", ts.URL+"/api/definitely-not-a-route", "", ""); r.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown /api route status = %d, want 404", r.StatusCode)
 	}
