@@ -375,6 +375,55 @@ with no config file, so a minimal usable server needs only two vars
 sane default. A YAML config can still be mounted at `/etc/carteiro/config.yaml`
 if you prefer, and YAML values are overridden by env vars.
 
+### Publishing the ports (Docker / Coolify: Ports Exposes and Port Mappings)
+
+Inside the container Carteiro binds three ports (one per listener). The
+listener env values bind **all interfaces** by default (`:8080`), and a bare
+port number is accepted and normalized (`8080` → `:8080`):
+
+| Port | Service | Listener env / config |
+|---|---|---|
+| `587` | SMTP submission | `CARTEIRO_LISTEN` (`listen`, default `:587`) |
+| `8080` | Web dashboard (SPA) | `CARTEIRO_WEB_LISTEN` (`web.listen`, default `:8080`) |
+| `9090` | Admin API | `CARTEIRO_API_LISTEN` (`api.listen`, default `127.0.0.1:9090`) |
+
+Only what you map to the **host** becomes reachable from outside the
+container. In the Coolify UI (or `docker run -p`, compose, etc.):
+
+- **Ports Exposes** — tells the platform which ports the container listens on
+  (used by probes/tooling). List the container ports, one per line: `587`,
+  `8080`, `9090`. This field is *not* where host access is configured and it
+  does not need port ranges.
+- **Port Mappings** — the actual `host:container` bindings. Use one entry per
+  port you want exposed, typically `1:1`:
+
+  ```text
+  587:587        # SMTP: applications/submission clients
+  8080:8080      # web dashboard (token-protected login)
+  9090:9090      # admin API — only if you want to call it from outside
+  ```
+
+  An entry like `8080:8080:587` is invalid (it mixes two ports into one
+  mapping). Leave a port out of the mappings and it stays unreachable from
+  the host, even if listed under Exposes.
+- **Network Aliases** — optional service name for other containers on the
+  same private network (e.g. `carteiro`); leave empty when nothing else talks
+  to it by name.
+
+Which mappings you need:
+
+| I want to… | Mappings to add | Extra env |
+|---|---|---|
+| only SMTP for internal apps | `587:587` | none |
+| open the web dashboard too | + `8080:8080` | none (`web.listen` already binds `:8080`) |
+| call the admin API from the host/tools | + `9090:9090` | `CARTEIRO_API_LISTEN=:9090` (the default `127.0.0.1:9090` is loopback-only and cannot be reached from the host) |
+
+The web dashboard proxies `/api/*` to the API listener **inside the
+container**, so a browser only needs port `8080` even when the API is not
+published at all. Keep published ports firewalled when possible; the panel is
+protected by the bearer token, but the SMTP port must not be exposed to the
+public internet without TLS (`require_tls: true`).
+
 ### Quick example with environment variables
 
 ```bash
