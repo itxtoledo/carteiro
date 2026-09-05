@@ -163,6 +163,8 @@ mkdir -p "$(dirname "$OUT_FILE")"
   fi
   echo "CARTEIRO_REQUIRE_TLS=$REQUIRE_TLS"
   echo "CARTEIRO_API_TOKEN=$API_TOKEN"
+  echo "# Web dashboard + admin API listener (defaults to :8080; expose 8080 in Coolify)"
+  echo "CARTEIRO_API_LISTEN=:8080"
 } > "$OUT_FILE"
 chmod 600 "$OUT_FILE"
 

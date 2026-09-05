@@ -32,9 +32,12 @@ internal/storage/     database layer: sqlite (default) + mysql drivers
 internal/smtpd/       SMTP submission server (:587, AUTH, DATA, STARTTLS)
 internal/relay/       MX delivery worker (retry/backoff, dead-letter)
 internal/dkim/        DKIM signing (RSA/Ed25519 via go-msgauth)
-internal/api/         admin REST API (bearer), queue monitoring, metrics,
-                      embedded openapi.json
+internal/api/         web server: admin REST API + dashboard routes (bearer),
+                      openapi.json, SPA mount
+internal/sends/       recent-sends ring buffer + RFC 5322 build/parse helpers
+internal/webui/       embedded SPA handler over web/dist (go:embed)
 internal/metrics/     atomic Prometheus counters
+web/                  React + Vite + Tailwind dashboard (src -> dist, embedded)
 systemd/              example unit (StateDirectory=/var/lib/carteiro)
 scripts/gen-envs.sh   interactive env generator (DKIM/TLS/accounts) for Coolify
 DNS.md                full DNS guide (SPF/DKIM/DMARC/PTR, Cloudflare notes)
@@ -43,7 +46,9 @@ DNS.md                full DNS guide (SPF/DKIM/DMARC/PTR, Cloudflare notes)
 
 Package rules: `config` is pure config (never imports storage/smtpd);
 `smtpd` authenticates against `storage.Store`; `relay` only talks to
-`storage.Store` + MX; `api` only to `storage.Store`. No global mutable state
+`storage.Store` + MX; `sends` depends on nothing internal (stdlib only);
+`api` talks to `storage.Store` + `sends` + `webui`; `smtpd`/`relay` push
+lifecycle events into the optional `sends.Recorder`. No global mutable state
 besides the API's own metrics; the config snapshot is read once at startup
 (no SIGHUP reload; OTA changes go through the DB/API).
 
@@ -82,9 +87,10 @@ Key rules (validated in `config.normalizeAndValidate`):
   anywhere; leftover file env vars are ignored. Pair is validated with
   `tls.X509KeyPair` at load.
 - **API token is a single plain-text token** (`api.token` /
-  `CARTEIRO_API_TOKEN`), never stored in the DB. API off without it; default
-  listen `127.0.0.1:9090` (inside a container that means loopback-only unless
-  `CARTEIRO_API_LISTEN=':9090'`).
+  `CARTEIRO_API_TOKEN`), never stored in the DB. Web panel + API off without
+  it; default listen `:8080` (binds all interfaces — the token is the gate;
+  `CARTEIRO_API_LISTEN` wins over the `HTTP_ADDR`/`CARTEIRO_HTTP_ADDR`
+  aliases).
 - Delivery/queue tunables exist in YAML and env: `CARTEIRO_DELIVERY_*`
   (connect/io timeouts, retry base/max, max attempts, poll interval,
   concurrency) and `CARTEIRO_QUEUE_DEAD_MAX` (`queue.dead_max`, default 1000,
@@ -155,23 +161,54 @@ them.
 - DKIM: sign when the envelope-from domain has a key in the DB; signing
   failure logs and sends unsigned (never blocks delivery).
 
-## Admin API, monitoring, Swagger
+## Web server: API, dashboard endpoints, SPA
 
-- Endpoints: `GET /health`, `GET /metrics` (Prometheus, public),
-  `GET /openapi.json` (public, embedded spec — keep it in sync with routes),
-  and bearer-protected `accounts`/`dkim` CRUD, `queue/stats`,
-  `queue?status=queued|dead`, `POST /queue/{id}/retry` (resets attempts).
+- One listener (`api.listen`) serves the API and the embedded React panel.
+  Routes are registered from a single table in `api.registerRoutes` (call it
+  with prefix "" + legacy=true for the root aliases and with "/api" +
+  legacy=false for the canonical set). The root alias exists ONLY for
+  pre-dashboard paths that are not React pages (`/health`, `/metrics`,
+  `/openapi.json`, `/dkim`, `/queue`); `/accounts` and the dashboard
+  endpoints are `/api`-only because their root paths (`/accounts`, `/sends`,
+  `/sends/{id}`, `/stats`, `/send`) are SPA client routes — never give an
+  API route a root path that shadows a page or direct reloads/refreshes of
+  the panel start answering API JSON. Public: `/api/health`,
+  `/api/metrics`, `/api/openapi.json`. Everything else (including
+  `/api/stats`, `/api/sends`, `/api/send`) requires the bearer token.
+- Dashboard-specific endpoints: `GET /api/stats` (counters + queue +
+  version + uptime), `GET /api/sends?limit=` and `GET /api/sends/{id}`
+  (recent sends with parsed `html`/`text`/`raw` for rendering),
+  `POST /api/send` (compose into the queue: `{"from","to":[],"subject",
+  "text","html"}`; `from` must be allowed by an account — same rule as SMTP
+  MAIL FROM) and `PATCH /api/accounts/{email}` (edit allowed senders and/or
+  reset the password; empty/omitted password keeps the current hash). The
+  dashboard's Accounts screen uses the PATCH endpoint; `GET/POST /api/accounts`
+  only list/create. Composed messages go through `storage.EnqueueWithID`
+  with a queue id in `Message-ID`.
+- The recent-sends feed is an **in-memory ring** (`internal/sends`, wired in
+  `main` as `sends.New(200, 512<<10)`): `smtpd` records on enqueue (Add
+  BEFORE the DB insert, `Drop` on failure), `relay` updates attempts/
+  delivered/dead, the retry endpoint re-queues. The database queue remains
+  the source of truth; the ring resets on restart and stores no credentials.
+- SPA: `web/fs.go` embeds `web/dist`; `internal/webui` serves files, falls
+  back to `index.html` for extension-less GETs and never swallows `/api/*`
+  (unknown API routes 404). `//go:embed` needs `web/dist` to exist — the
+  committed placeholder (`.gitkeep` + `index.html`) keeps `go build`/
+  `go test` green without Node; `make build`, Docker and CI always build the
+  real UI first.
 - Responses never leak `password_hash`, token or DKIM key text.
 - The OpenAPI JSON lives in `internal/api/openapi.json` (go:embed) and is
   used by Swagger UI; update it whenever endpoints/schemas change.
 
 ## Docker, containers and releases
 
-- `Dockerfile`: static binary (CGO_ENABLED=0), `golang:1.26-alpine` build,
-  `alpine:3.20` runtime with ca-certificates/tzdata/busybox-extras (for the
-  `nc` healthcheck), runs **as root** (binds 587 < 1024 and writes volumes),
-  `HEALTHCHECK` = TCP probe on 587, `EXPOSE 587 9090`. No inline comments
-  after EXPOSE (Apple's builder rejects them).
+- `Dockerfile`: `node:22-alpine` UI stage (`npm ci && npm run build`), then
+  static binary (CGO_ENABLED=0) on `golang:1.26-alpine` copying
+  `web/fs.go` + the UI `dist` before compiling, `alpine:3.20` runtime with
+  ca-certificates/tzdata/busybox-extras (for the `nc` healthcheck), runs
+  **as root** (binds 587 < 1024 and writes volumes), `HEALTHCHECK` = TCP
+  probe on 587, `EXPOSE 587 8080`. No inline comments after EXPOSE (Apple's
+  builder rejects them).
 - Image: `ghcr.io/itxtoledo/carteiro`. One workflow
   (`.github/workflows/release.yml`) per `v*` tag: multi-arch image
   (amd64+arm64, also tagged `latest`) + static binaries for linux/darwin
@@ -192,8 +229,13 @@ them.
   `PlainAuth` refuses plaintext unless TLS or the server name matches —
   tests dial `127.0.0.1` explicitly.
 - Test names and failure messages are English. Run the whole suite after any
-  change to config/storage/smtpd/relay/api; the packages are coupled through
-  the config model.
+  change to config/storage/smtpd/relay/api/sends; the packages are coupled
+  through the config model. `sends` tests cover the build/parse round trip
+  (RFC 2047 words, quoted-printable, latin-1) and the recorder ring.
+- `gofmt -w cmd internal web` (web/fs.go is Go). Never reformat `web/src`.
+- Changing a constructor signature touches `main` and the package tests
+  (`smtpd.New`, `relay.New`, `api.New` all take the recorder; `api.New` also
+  takes version + size limits).
 
 ## Gotchas learned
 
@@ -210,6 +252,10 @@ them.
 - Base64 everywhere: values with spaces/newlines are tolerated (whitespace is
   stripped before decoding), so `base64 -w0` output and wrapped output both
   work.
+- `web/dist/` is gitignored except the committed placeholder
+  (`.gitkeep`, `index.html`). Never delete the folder: `go:embed` fails at
+  compile time without it, and the placeholder is what keeps Node-free
+  `go build`/`go test` working.
 
 ## Remote / workflow
 

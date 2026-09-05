@@ -50,12 +50,16 @@ storage:
   # MySQL connection string (used when type: mysql). Empty for sqlite.
   dsn: ""
 
-# --- Admin API (bearer tokens, monitoring) -----------------------------------
-# Optional. The single token is plain text here (or CARTEIRO_API_TOKEN) and
-# is the ONLY place it exists: it is never stored in the database - only the
-# server owner sees the config. Without the token the API stays off.
+# --- Web panel + Admin API (bearer tokens, dashboard) ------------------------
+# Optional. Serves the embedded React dashboard (SPA at /) and the admin API
+# on ONE listener. The single token is plain text here (or CARTEIRO_API_TOKEN)
+# and is the ONLY place it exists: it is never stored in the database - only
+# the server owner sees the config. Without the token the server stays off.
+# The panel and every /api/* call (except /health, /metrics, /openapi.json)
+# require "Authorization: Bearer <token>".
 api:
-  listen: "127.0.0.1:9090"   # bind to localhost; expose only if needed
+  listen: ":8080"          # default :8080; env alias: CARTEIRO_API_LISTEN,
+                           # HTTP_ADDR or CARTEIRO_HTTP_ADDR
   token: "CHANGE-ME-a-long-random-token"
 
 # --- Optional TLS -----------------------------------------------------------

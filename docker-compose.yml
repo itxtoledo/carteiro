@@ -18,7 +18,7 @@ services:
     restart: unless-stopped
     ports:
       - "587:587"      # SMTP submission
-      - "9090:9090"    # admin API (bind to 127.0.0.1 on the host if possible)
+      - "8080:8080"    # web dashboard + admin API (bind to 127.0.0.1 on the host if possible)
     environment:
       # Seed account (upserted on startup, logged clearly):
       CARTEIRO_ACCOUNTS: "sender@yourdomain.com:AVERYSTRONGPASSWORD"
@@ -27,9 +27,10 @@ services:
       # CARTEIRO_DKIM_KEYS: "yourdomain.com:mail:PASTE-BASE64-OF-KEY-FILE"
       # Several domains:
       # CARTEIRO_DKIM_KEYS: "doma.com:mail:QUJDREVGR0hJSktMTU5PUFE=;domb.com:mail:UkVGR0hJSktMTU5PUFFSU1Q="
-      # Admin API bearer token, singular (never stored in the DB):
+      # Admin API bearer token, singular (never stored in the DB) — also the
+      # web panel login:
       CARTEIRO_API_TOKEN: "CHANGE-ME-a-long-random-token"
-      # CARTEIRO_API_LISTEN: ":9090"
+      # CARTEIRO_API_LISTEN: ":8080"   # panel + API (default)
       # CARTEIRO_REQUIRE_TLS: "false"
     volumes:
       - carteiro-data:/var/lib/carteiro
