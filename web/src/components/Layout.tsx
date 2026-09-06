@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
+import { RedactToggle } from "./Redact";
 import { clearSession, saveTheme } from "../lib/api";
 
 type Theme = "dark" | "light";
@@ -114,6 +115,7 @@ export function Layout() {
             ) : null}
           </div>
           <div className="flex items-center gap-2">
+            <RedactToggle />
             <ThemeToggle theme={theme} onChange={setTheme} />
             <button
               type="button"
