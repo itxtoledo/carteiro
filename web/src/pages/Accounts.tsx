@@ -1,8 +1,10 @@
 import { useState } from "react";
 
 import { pageCls, Card, CardHeader, EmptyState, ErrorBox, Spinner, btnDanger, btnGhost, btnPrimary, inputCls } from "../components/ui";
+import { useRedact } from "../components/Redact";
 import { api } from "../lib/api";
 import type { Account } from "../lib/types";
+import { maskEmail } from "../lib/sensitive";
 import { usePolling } from "../lib/usePolling";
 
 interface PatchResult {
@@ -176,6 +178,7 @@ function EditAccountModal({
 
 export function AccountsPage() {
   const { data, error, loading, reload } = usePolling<Account[]>("accounts", () => api.get<Account[]>("/api/accounts"), 10_000);
+  const { redact } = useRedact();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -290,12 +293,12 @@ export function AccountsPage() {
               </thead>
               <tbody>
                 {data.map((a) => (
-                  <tr key={a.email} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
-                    <td className="px-4 py-2.5 font-mono text-xs text-slate-800 dark:text-slate-100">{a.email}</td>
+                  <tr key={redact ? maskEmail(a.email) : a.email} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
+                    <td className="px-4 py-2.5 font-mono text-xs text-slate-800 dark:text-slate-100">{redact ? maskEmail(a.email) : a.email}</td>
                     <td className="px-4 py-2.5">
                       <div className="flex flex-wrap gap-1">
                         {a.allowed_from.map((f) => (
-                          <Chip key={f} value={f} />
+                          <Chip key={f} value={redact ? maskEmail(f) : f} />
                         ))}
                       </div>
                     </td>
