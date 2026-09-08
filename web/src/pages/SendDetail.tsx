@@ -2,8 +2,10 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { pageCls, Card, ErrorBox, Spinner, StatusBadge, btnGhost, btnPrimary } from "../components/ui";
+import { useRedact } from "../components/Redact";
 import { api } from "../lib/api";
 import type { SendDetail } from "../lib/types";
+import { maskEmail, maskList, maskTextEmails, redactedToken } from "../lib/sensitive";
 import { formatBytes, formatTime } from "../lib/types";
 import { usePolling } from "../lib/usePolling";
 
@@ -27,6 +29,7 @@ export function SendDetailPage() {
   );
   const [tab, setTab] = useState<Tab>("preview");
   const [busy, setBusy] = useState(false);
+  const { redact } = useRedact();
 
   const retry = async () => {
     setBusy(true);
@@ -56,6 +59,10 @@ export function SendDetailPage() {
   }
 
   const terminal = data.status === "delivered" || data.status === "dead";
+  const viewFrom = redact ? maskEmail(data.from) : data.from;
+  const viewTo = redact ? maskList(data.to).join(", ") : data.to.join(", ");
+  const viewSubject = redact ? redactedToken : data.subject || "(no subject)";
+  const viewLastError = data.last_error ? (redact ? maskTextEmails(data.last_error) : data.last_error) : undefined;
   const tabCls = (t: Tab) =>
     `rounded px-3 py-1.5 text-sm font-medium ${
       tab === t
@@ -71,7 +78,7 @@ export function SendDetailPage() {
             ← Back to sends
           </Link>
           <h2 className="mt-1 text-base font-semibold text-slate-800 dark:text-slate-100">
-            {data.subject || "(no subject)"}
+            {viewSubject}
           </h2>
         </div>
         <div className="flex items-center gap-2">
@@ -90,13 +97,13 @@ export function SendDetailPage() {
       <Card>
         <div className="grid gap-1 px-4 py-3 sm:grid-cols-2">
           <MetaRow k="Message-ID" v={data.id} />
-          <MetaRow k="From" v={data.from} />
-          <MetaRow k="To" v={data.to.join(", ")} />
+          <MetaRow k="From" v={viewFrom} />
+          <MetaRow k="To" v={viewTo} />
           <MetaRow k="Size" v={`${formatBytes(data.size)}${data.truncated ? " (body truncated for the feed)" : ""}`} />
           <MetaRow k="Queued at" v={formatTime(data.queued_at)} />
           <MetaRow k="Updated at" v={formatTime(data.updated_at)} />
           <MetaRow k="Attempts" v={String(data.attempts)} />
-          {data.last_error ? <MetaRow k="Last error" v={data.last_error} /> : null}
+          {viewLastError ? <MetaRow k="Last error" v={viewLastError} /> : null}
         </div>
       </Card>
 
@@ -118,7 +125,11 @@ export function SendDetailPage() {
           </span>
         </div>
 
-        {tab === "preview" && data.html ? (
+        {redact ? (
+          <div className="p-6 text-center text-sm text-slate-500 dark:text-slate-400">
+            Sensitive content hidden (screenshot mode). Disable the eye icon to view this message.
+          </div>
+        ) : tab === "preview" && data.html ? (
           <iframe
             title="E-mail preview"
             sandbox=""

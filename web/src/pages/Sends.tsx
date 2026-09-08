@@ -3,9 +3,11 @@ import { Link } from "react-router-dom";
 
 import { FilterSelect, type SelectOption } from "../components/FilterSelect";
 import { pageCls, Card, CardHeader, EmptyState, ErrorBox, Spinner, StatusBadge, inputCls } from "../components/ui";
+import { useRedact } from "../components/Redact";
 import { api } from "../lib/api";
 import type { SendSummary, SendStatus } from "../lib/types";
 import { formatBytes, formatTime, timeAgo } from "../lib/types";
+import { maskList, maskTextEmails, redactedToken } from "../lib/sensitive";
 import { usePolling } from "../lib/usePolling";
 
 type StatusFilter = "all" | SendStatus;
@@ -88,6 +90,7 @@ function SortHeader({
 }
 
 export function SendsPage() {
+  const { redact } = useRedact();
   const { data, error, loading, reload } = usePolling<SendSummary[]>(
     "sends",
     () => api.get<SendSummary[]>("/api/sends?limit=200"),
@@ -146,7 +149,7 @@ export function SendsPage() {
         if (!hits) return false;
       }
       if (q) {
-        const hay = `${s.subject} ${s.from} ${s.to.join(" ")} ${s.id}`.toLowerCase();
+        const hay = `${s.subject} ${s.from} ${s.to.join(", ")} ${s.id}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -343,16 +346,16 @@ export function SendsPage() {
                           to={`/sends/${s.id}`}
                           className="block truncate font-medium text-slate-800 hover:underline dark:text-slate-100"
                         >
-                          {s.subject || "(no subject)"}
+                          {redact ? redactedToken : s.subject || "(no subject)"}
                         </Link>
                         <div className="truncate font-mono text-[11px] text-slate-400">{s.id}</div>
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-slate-600 dark:text-slate-300">
-                        {s.from}
+                        {redact ? maskList([s.from])[0] : s.from}
                       </td>
                       <td className="max-w-0 px-4 py-2.5">
                         <div className="truncate font-mono text-xs text-slate-600 dark:text-slate-300">
-                          {s.to.join(", ")}
+                          {redact ? maskList(s.to).join(", ") : s.to.join(", ")}
                         </div>
                       </td>
                       <td className="px-4 py-2.5">
@@ -386,9 +389,9 @@ export function SendsPage() {
                         {s.last_error ? (
                           <div
                             className="truncate font-mono text-[11px] text-red-700 dark:text-red-400"
-                            title={s.last_error}
+                            title={redact ? maskTextEmails(s.last_error) : s.last_error}
                           >
-                            {s.last_error}
+                            {redact ? maskTextEmails(s.last_error) : s.last_error}
                           </div>
                         ) : (
                           <span className="text-xs text-slate-300 dark:text-slate-600">—</span>

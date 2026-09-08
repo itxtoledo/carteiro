@@ -1,12 +1,15 @@
 import { Link } from "react-router-dom";
 
 import { pageCls, Card, CardHeader, EmptyState, ErrorBox, Spinner, StatCard, StatusBadge } from "../components/ui";
+import { useRedact } from "../components/Redact";
 import { api } from "../lib/api";
 import type { SendSummary, Stats } from "../lib/types";
 import { timeAgo, uptimeHuman } from "../lib/types";
+import { maskList, redactedToken } from "../lib/sensitive";
 import { usePolling } from "../lib/usePolling";
 
 function RecentTable({ rows }: { rows: SendSummary[] }) {
+  const { redact } = useRedact();
   return (
     <table className="w-full text-left text-sm">
       <thead>
@@ -19,17 +22,21 @@ function RecentTable({ rows }: { rows: SendSummary[] }) {
         </tr>
       </thead>
       <tbody>
-        {rows.map((s) => (
+        {rows.map((s) => {
+          const subject = redact ? redactedToken : s.subject || "(no subject)";
+          const from = redact ? maskList([s.from])[0] : s.from;
+          const to = redact ? maskList(s.to).join(", ") : s.to.join(", ");
+          return (
           <tr key={s.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50">
             <td className="max-w-0 px-4 py-2.5">
               <Link to={`/sends/${s.id}`} className="block truncate font-medium text-slate-800 hover:underline dark:text-slate-100">
-                {s.subject || "(no subject)"}
+                {subject}
               </Link>
               <div className="truncate font-mono text-[11px] text-slate-400">{s.id}</div>
             </td>
-            <td className="truncate px-4 py-2.5 font-mono text-xs text-slate-600 dark:text-slate-300">{s.from}</td>
+            <td className="truncate px-4 py-2.5 font-mono text-xs text-slate-600 dark:text-slate-300">{from}</td>
             <td className="hidden max-w-0 px-4 py-2.5 lg:table-cell">
-              <div className="truncate font-mono text-xs text-slate-600 dark:text-slate-300">{s.to.join(", ")}</div>
+              <div className="truncate font-mono text-xs text-slate-600 dark:text-slate-300">{to}</div>
             </td>
             <td className="px-4 py-2.5">
               <StatusBadge status={s.status} />
@@ -38,7 +45,8 @@ function RecentTable({ rows }: { rows: SendSummary[] }) {
               {timeAgo(s.queued_at)}
             </td>
           </tr>
-        ))}
+          );
+        })}
       </tbody>
     </table>
   );

@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import "./index.css";
 import { Layout } from "./components/Layout";
+import { RedactProvider } from "./components/Redact";
 import { getToken, applyTheme } from "./lib/api";
 import { AccountsPage } from "./pages/Accounts";
 import { ComposePage } from "./pages/Compose";
@@ -53,7 +54,9 @@ function AppRoutes() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
-      <AppRoutes />
+      <RedactProvider>
+        <AppRoutes />
+      </RedactProvider>
     </BrowserRouter>
   </StrictMode>,
 );
