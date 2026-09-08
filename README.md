@@ -244,6 +244,22 @@ queue), **Sends** (history with rendered HTML/text previews and live delivery
 status) and **Accounts** (add/remove SMTP users). The SPA is served at `/`;
 open `http://<host>:8080/` and log in with the API token.
 
+The screenshots below use fictional data. Login uses the API token
+configured on the server.
+
+### Screenshots
+
+| | |
+|---|---|
+| ![Login](docs/screenshots/01-login-dark.png) | ![Dashboard (dark)](docs/screenshots/02-dashboard-dark.png) |
+| ![Dashboard (light)](docs/screenshots/03-dashboard-light.png) | ![Sends grid](docs/screenshots/04-sends-dark.png) |
+| ![Send detail: rendered e-mail](docs/screenshots/05-send-detail-rendered-dark.png) | ![Accounts](docs/screenshots/06-accounts-dark.png) |
+| ![Compose](docs/screenshots/07-compose-dark.png) | ![Sends with the eye toggle on (sensitive data hidden)](docs/screenshots/08-sends-redacted-dark.png) |
+
+> The last screenshot shows the **eye toggle** in the top bar: it masks
+> e-mail addresses and subjects so the panel can be screenshotted without
+> leaking sensitive data.
+
 The admin API (`api.listen`, loopback `127.0.0.1:9090` by default) and the web
 dashboard (`web.listen`, `:8080` by default) listen on **separate ports** in
 the same process. The panel serves the SPA and **proxies `/api/*` to the API
