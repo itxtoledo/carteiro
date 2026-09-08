@@ -49,6 +49,7 @@ jobs:
             --platform linux/amd64,linux/arm64 \
             --build-arg "VERSION=${VERSION}" \
             --tag "${IMAGE}:${VERSION}" \
+            --tag "${IMAGE}:v${VERSION}" \
             --tag "${IMAGE}:latest" \
             --push .
 
