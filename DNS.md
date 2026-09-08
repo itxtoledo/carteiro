@@ -13,6 +13,12 @@ Everything below is about making the *outbound* side of your domain trusted.
 fixed public IP, and `example.com` = the sending domain (the part after `@`
 in the accounts). Replace them with yours.
 
+`hostname` and sending domain **do not have to belong to the same domain**:
+Carteiro can live under `smtp.example.org` while you send as
+`no-reply@example.com`. Which record goes on which domain is the one thing
+this guide is really about — [section 1](#1-how-receiving-servers-decide)
+gives the mapping, and the rest of the file details each record.
+
 ---
 
 ## Table of contents
@@ -36,25 +42,48 @@ When your Carteiro server delivers a message, the receiving side (Gmail,
 Outlook, etc.) runs up to four checks. A message that fails the important
 ones is spam-foldered or rejected:
 
-| Check | What it verifies | Record needed |
-|---|---|---|
-| **SPF** | The connecting IP is authorized to send **for the envelope sender domain** | TXT on the sender domain (e.g. `example.com`) |
-| **DKIM** | The message carries a valid **signature** by a key published for the sender domain | TXT at `<selector>._domainkey.<sender-domain>` |
-| **DMARC** | SPF and/or DKIM **align** with the visible `From:` header domain, and a policy says what to do when they fail | TXT at `_dmarc.<sender-domain>` |
-| **PTR/rDNS** | The **outbound IP** resolves back to a name (ideally the one the server announces in EHLO) | Set at the **IP owner** (hosting provider), not in your DNS zone |
+| Check | What it verifies | Record to publish | Where it lives |
+|---|---|---|---|
+| **SPF** | The connecting IP is authorized to send **for the envelope sender domain** | TXT on the sender-domain apex (e.g. `example.com`) | **sending domain** (the one in `From:` / accounts) |
+| **DKIM** | The message carries a valid **signature** by a key published for the sender domain | TXT at `<selector>._domainkey.<sender-domain>` | **sending domain** |
+| **DMARC** | SPF and/or DKIM **align** with the visible `From:` header domain, and a policy says what to do when they fail | TXT at `_dmarc.<sender-domain>` | **sending domain** |
+| **PTR/rDNS** | The **outbound IP** resolves back to a name (ideally the one the server announces in EHLO) | `IP → smtp hostname` entry | the **IP owner** (hosting provider panel), *not* any DNS zone |
+
+The **`A` record of the SMTP hostname** is the only record that belongs to
+the hostname's own domain (see the worked example below); the hostname
+domain itself needs no SPF/DKIM/DMARC, because no mail is sent "from" it.
 
 Two subtle but crucial points:
 
 - **SPF/DKIM/DMARC live on the *sender* domain, not on the server hostname.**
   If the account is `no-reply@example.com` but Carteiro runs on
   `smtp.anotherdomain.com`, all three records are published **on
-  `example.com`**. The `smtp.anotherdomain.com` name is only used for EHLO
-  and the PTR.
+  `example.com`**. The `smtp.anotherdomain.com` name is only used for EHLO,
+  the `A` record and the PTR.
 - **Alignment matters.** DMARC compares the domain of the *visible From:*
   header with the domain that passed SPF (the envelope sender) or signed the
   DKIM. Carteiro forces `MAIL FROM` to be an account of the configured
   domain, so if you send `From: no-reply@example.com` and the account is
   `no-reply@example.com`, alignment is guaranteed by construction.
+
+### Worked example: server hostname on a different domain than the sender
+
+Say Carteiro runs on a VPS whose hostname is `smtp.example.org` (fixed IP
+`203.0.113.10`) and the emails are sent as `no-reply@example.com`. The DNS
+work is split across **two DNS zones plus the VPS provider panel**:
+
+| Where | What to create |
+|---|---|
+| DNS zone of **`example.com`** (the *sending* domain) | SPF TXT (`v=spf1 ip4:203.0.113.10 -all`), DKIM TXT at `mail._domainkey.example.com`, DMARC TXT at `_dmarc.example.com` |
+| DNS zone of **`example.org`** (the *hostname* domain) | one `A` record: `smtp.example.org → 203.0.113.10` — nothing else |
+| **VPS provider panel** (the IP owner) | PTR: `203.0.113.10 → smtp.example.org` |
+| Carteiro config (not DNS) | `hostname: smtp.example.org`; account `no-reply@example.com` + its DKIM seed for `example.com` |
+
+`example.org` needs **no SPF, DKIM or DMARC** of its own: those three
+records always follow the domain that appears in the `From:` address. If
+hostname and sender *do* share a domain (`smtp.example.com` + `example.com`),
+this table collapses: everything lands in the single `example.com` zone and
+only the PTR is still created at the IP owner.
 
 ---
 
@@ -275,6 +304,11 @@ A:    smtp.example.com -> 203.0.113.10        (your DNS zone)
 EHLO: smtp.example.com                        (Carteiro hostname config)
 ```
 
+The name in all three is only the **hostname of the box** — it does not have
+to belong to the domain you send from (see the worked example in
+[section 1](#1-how-receiving-servers-decide)). What must match is the name
+itself: the `A` record, the PTR answer and the EHLO banner.
+
 When all three match it is called **FCrDNS** (forward-confirmed reverse
 DNS). Receivers treat a missing or mismatched PTR as a strong spam signal;
 some (Outlook/Exchange Online is the strictest) reject outright with
@@ -304,6 +338,10 @@ only if you want bounces and DMARC reports delivered somewhere:
 ```dns
 example.com.  MX  10 mail.example.com.
 ```
+
+The MX record lives on the **sending domain** (the domain that should
+receive the bounces/reports). `mail.example.com` is the mailbox host of
+*that* domain — it has nothing to do with Carteiro's own hostname.
 
 If the domain already has MX records (existing mail service), leave them —
 they do not conflict with sending through Carteiro.
@@ -393,6 +431,8 @@ Before sending real volume:
 - [ ] **Warm up** a new IP: a handful of messages per day at first, growing
       slowly
 
-Remember the mental model: **SPF and DKIM live on the domain you send from;
-PTR lives on the IP you send from; DMARC is the referee that checks both
-against the `From:` you show.**
+Remember the mental model: **SPF, DKIM and DMARC live on the domain you
+send from; the SMTP hostname's `A` record lives on the hostname's own domain
+(which may be a different one); PTR lives on the IP you send from (created
+at the IP owner); DMARC is the referee that checks both against the `From:`
+you show.**

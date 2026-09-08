@@ -584,7 +584,9 @@ There is a helper script that asks the questions (hostname, account, DKIM
 domain/selector, TLS option) and writes a ready-to-paste `.txt` with every
 `CARTEIRO_*` variable. It generates the DKIM RSA-2048 key pair — and, when
 asked, a self-signed TLS certificate — and prints the DNS records to
-publish (`A`, DKIM `p=`, SPF, PTR). It runs on **macOS and Linux** (only
+publish (`A`, DKIM `p=`, SPF, PTR). The `A` and PTR records belong to the
+*hostname*; the DKIM `p=` and SPF belong to the *sending* domain (they can
+differ). It runs on **macOS and Linux** (only
 `bash` and `openssl` are required):
 
 ```bash
@@ -782,10 +784,35 @@ its own `CARTEIRO_SQLITE_PATH` volume.
 > **[DNS.md](DNS.md)**.
 
 Carteiro **only sends** (it does not receive). For Gmail, Outlook etc. to
-deliver to the inbox — not spam — your domain needs **SPF + DKIM + DMARC**
-aligned, plus **reverse DNS (PTR)** on the outbound IP. The steps below use
-`yourdomain.com` and assume the Carteiro server has a fixed public IP
-`203.0.113.10` (replace with yours).
+deliver to the inbox — not spam — the **domain in your `From:` addresses**
+needs **SPF + DKIM + DMARC** aligned, plus **reverse DNS (PTR)** on the
+outbound IP. The steps below use `yourdomain.com` as the sending domain and
+assume the Carteiro server has a fixed public IP `203.0.113.10` (replace
+with yours).
+
+**Where each record goes — read this before the steps.** The records are
+split across the *sending domain*, the *server-hostname domain* and the *IP
+owner*. The first two may be the **same domain or two completely different
+domains** (Carteiro hosted under `smtp.example.org` while sending as
+`no-reply@yourdomain.com` is a normal setup):
+
+| Record | Where it is published |
+|---|---|
+| SPF, DKIM, DMARC (steps 1–3) | the DNS zone of the **sending domain** — the part after `@` in your accounts (`no-reply@yourdomain.com`) |
+| `A` record of the SMTP hostname | the DNS zone the **hostname** (`hostname:` config value, used in EHLO) belongs to, e.g. `smtp.example.org` under `example.org` |
+| PTR / reverse DNS (step 4) | **not a DNS zone** — created in the VPS provider panel (rDNS), pointing the IP to the SMTP hostname |
+
+Rules that never change:
+
+- SPF, DKIM and DMARC **always follow the From domain**: if you send as
+  `no-reply@yourdomain.com`, those three TXT records go on `yourdomain.com`,
+  even when Carteiro itself is hosted on a different domain.
+- The hostname's own domain only needs the `A` record of the hostname — it
+  gets **no SPF/DKIM/DMARC**, because no mail is sent "from" it.
+- The PTR is set at the **IP owner** (VPS panel), never in a DNS zone.
+
+When hosting and sending share one domain (what the steps below assume),
+everything collapses into that single zone and only the PTR stays external.
 
 > **Prerequisite**: the outbound IP must be allowed to make port 25
 > connections. Cloud providers (AWS EC2, GCP, Azure, Oracle, DigitalOcean on
@@ -870,6 +897,11 @@ The server's public IP needs a **PTR pointing to Carteiro's hostname** (the
 panel (rDNS), e.g. `10.113.0.203.in-addr.arpa. PTR smtp.yourdomain.com.`,
 plus an `A` record for `smtp.yourdomain.com` pointing to that IP.
 
+The hostname does **not** need to belong to the sending domain: hosting
+under `smtp.example.org` while sending as `no-reply@yourdomain.com` is fine
+— just add the `A` record of `smtp.example.org` in the `example.org` zone
+and point the PTR to it.
+
 Verify: `dig -x 203.0.113.10 +short`
 
 ### 5. MX record for your domain (recommended)
@@ -879,6 +911,10 @@ Not needed to **send**, but good practice to receive bounces/DMARC reports:
 ```dns
 yourdomain.com.  MX  10 smtp.yourdomain.com.
 ```
+
+Like SPF/DKIM/DMARC, the MX lives on the **sending domain** (it must point
+to whatever host actually has mailboxes for `yourdomain.com` — only use the
+Carteiro hostname if that same box really receives mail for it).
 
 ### Checklist before the first real send
 
