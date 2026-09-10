@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 
 	"carteiro/internal/config"
 	"carteiro/internal/dkim"
+	"carteiro/internal/dnscheck"
 	"carteiro/internal/metrics"
 	"carteiro/internal/sends"
 	"carteiro/internal/storage"
@@ -35,22 +37,30 @@ type Server struct {
 	metrics        *metrics.Metrics
 	rec            *sends.Recorder
 	version        string
+	hostname       string
 	started        time.Time
 	maxMessageSize int64
 	maxRecipients  int
+
+	// dns is the resolver used by the DNS diagnostics endpoint. It is a
+	// field (not a package global) so tests can inject canned answers.
+	dns dnscheck.Resolver
 
 	handler http.Handler
 	http    *http.Server
 }
 
 // New creates the API server. rec is the recent-sends recorder (may be nil);
-// version is reported by /api/stats; zero limits fall back to the defaults
+// version is reported by /api/stats; hostname (config value) enables the
+// reverse-DNS check of /api/dns; zero limits fall back to the defaults
 // (25 MiB / 100 recipients).
-func New(cfg *config.API, store *storage.Store, log *slog.Logger, m *metrics.Metrics, rec *sends.Recorder, version string, maxMessageSize int64, maxRecipients int) *Server {
+func New(cfg *config.API, store *storage.Store, log *slog.Logger, m *metrics.Metrics, rec *sends.Recorder, version, hostname string, maxMessageSize int64, maxRecipients int) *Server {
 	s := &Server{
 		store: store, token: cfg.Token, log: log, metrics: m,
-		rec: rec, version: version, started: time.Now().UTC(),
+		rec: rec, version: version, hostname: strings.TrimSpace(hostname),
+		started:        time.Now().UTC(),
 		maxMessageSize: maxMessageSize, maxRecipients: maxRecipients,
+		dns: net.DefaultResolver,
 	}
 	if s.maxMessageSize <= 0 {
 		s.maxMessageSize = 25 << 20
@@ -115,6 +125,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux, prefix string, legacy bool) 
 		{method: "GET", path: "/sends", h: s.handleListSends},
 		{method: "GET", path: "/sends/{id}", h: s.handleGetSend},
 		{method: "POST", path: "/send", h: s.handleSend},
+		{method: "GET", path: "/dns", h: s.handleDNSCheck},
 	}
 	for _, rt := range routes {
 		if legacy && !rt.legacy {
@@ -510,6 +521,44 @@ func (s *Server) handleGetSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, d)
+}
+
+// --- dashboard: DNS diagnostics ----------------------------------------------
+
+// handleDNSCheck analyses the public DNS records of a sending domain (SPF,
+// DKIM, DMARC, MX, PTR) and reports whether they are set up for outbound
+// mail. When the domain has a DKIM key stored the private key is used to
+// verify the published public key. The domain is required; the selector
+// defaults to the one stored for the domain.
+func (s *Server) handleDNSCheck(w http.ResponseWriter, r *http.Request) {
+	domain := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("domain")))
+	selector := strings.TrimSpace(r.URL.Query().Get("selector"))
+	if domain == "" {
+		writeError(w, http.StatusBadRequest, "domain query parameter is required")
+		return
+	}
+	var keyPEM string
+	key, found, err := s.store.GetDKIM(domain)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if found {
+		keyPEM = key.KeyData
+		if selector == "" {
+			selector = key.Selector
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	report := dnscheck.Check(ctx, s.dns, dnscheck.Request{
+		Domain:        domain,
+		Selector:      selector,
+		PrivateKeyPEM: keyPEM,
+		Hostname:      s.hostname,
+	})
+	s.log.Info("api: dns check", "domain", domain, "selector", selector, "ok", report.OK)
+	writeJSON(w, http.StatusOK, report)
 }
 
 // --- dashboard: compose ------------------------------------------------------

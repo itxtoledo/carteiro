@@ -42,6 +42,33 @@ export interface Health {
   status: string;
 }
 
+export type DNSCheckStatus = "pass" | "warn" | "fail" | "info";
+
+export interface DNSCheck {
+  name: string;
+  label: string;
+  status: DNSCheckStatus;
+  message: string;
+  found?: string[];
+  expected?: string;
+}
+
+export interface DNSReport {
+  domain: string;
+  selector?: string;
+  hostname?: string;
+  ok: boolean;
+  passed: number;
+  warnings: number;
+  failed: number;
+  checks: DNSCheck[];
+}
+
+export interface DKIMKey {
+  domain: string;
+  selector: string;
+}
+
 export interface SendResult {
   id: string;
   status: SendStatus;

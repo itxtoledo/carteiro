@@ -9,6 +9,7 @@ import { getToken, applyTheme } from "./lib/api";
 import { AccountsPage } from "./pages/Accounts";
 import { ComposePage } from "./pages/Compose";
 import { DashboardPage } from "./pages/Dashboard";
+import { DnsPage } from "./pages/Dns";
 import { LoginPage } from "./pages/Login";
 import { SendDetailPage } from "./pages/SendDetail";
 import { SendsPage } from "./pages/Sends";
@@ -45,6 +46,7 @@ function AppRoutes() {
         <Route path="/sends" element={<SendsPage />} />
         <Route path="/sends/:id" element={<SendDetailPage />} />
         <Route path="/accounts" element={<AccountsPage />} />
+        <Route path="/dns" element={<DnsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

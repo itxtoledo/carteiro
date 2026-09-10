@@ -533,6 +533,107 @@
         }
       }
     },
+    "/api/dns": {
+      "get": {
+        "summary": "Analyse the public DNS records (SPF, DKIM, DMARC, MX, PTR) of a sending domain",
+        "description": "Runs outbound-deliverability checks for the given domain. When the domain has a DKIM key stored in Carteiro the published p= is compared against the stored private key. The selector defaults to the one stored for the domain; the hostname used for the reverse-DNS check comes from the server configuration.",
+        "tags": [
+          "dashboard"
+        ],
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "sending domain to analyse (e.g. example.com)"
+          },
+          {
+            "name": "selector",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "DKIM selector; defaults to the selector stored for the domain"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DNS diagnostic report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "domain": {
+                      "type": "string"
+                    },
+                    "selector": {
+                      "type": "string"
+                    },
+                    "hostname": {
+                      "type": "string"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "passed": {
+                      "type": "integer"
+                    },
+                    "warnings": {
+                      "type": "integer"
+                    },
+                    "failed": {
+                      "type": "integer"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pass",
+                              "warn",
+                              "fail",
+                              "info"
+                            ]
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "found": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "expected": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing domain"
+          }
+        }
+      }
+    },
     "/api/accounts/{email}": {
       "patch": {
         "tags": [
