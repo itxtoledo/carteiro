@@ -24,6 +24,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Only the final Alpine stage needs emulation (it runs `apk add` for the
+      # target arch); the npm and Go stages cross-compile natively.
       - name: Set up QEMU (multi-architecture builds)
         uses: docker/setup-qemu-action@v3
 
@@ -39,10 +41,11 @@ jobs:
 
       - name: Build and push (linux/amd64 + linux/arm64)
         env:
-          VERSION: ${{ github.ref_name }}
+          TAG_INPUT: ${{ github.event.inputs.tag }}
         run: |
-          # workflow_dispatch uses the "tag" input; tag pushes use ref_name.
-          if [ -z "${VERSION}" ] || [ "${VERSION}" = "" ]; then VERSION="${{ github.event.inputs.tag }}"; fi
+          # workflow_dispatch uses the "tag" input; a tag push uses ref_name.
+          VERSION="${TAG_INPUT}"
+          if [ -z "${VERSION}" ]; then VERSION="${GITHUB_REF_NAME}"; fi
           VERSION="${VERSION#v}"
           echo "version=${VERSION}" >> "$GITHUB_ENV"
           docker buildx build \
@@ -50,6 +53,8 @@ jobs:
             --build-arg "VERSION=${VERSION}" \
             --tag "${IMAGE}:${VERSION}" \
             --tag "${IMAGE}:latest" \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
             --push .
 
   binaries:
@@ -99,8 +104,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [ -z "$VERSION" ]; then VERSION="${{ github.event.inputs.tag }}"; VERSION="${VERSION#v}"; fi
+          VERSION="${{ github.event.inputs.tag }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME}"; fi
+          VERSION="${VERSION#v}"
           go build -trimpath \
             -ldflags "-s -w -X main.version=${VERSION}" \
             -o "carteiro_${VERSION}_${{ matrix.target }}" ./cmd/carteiro
@@ -136,7 +142,8 @@ jobs:
       - name: Build release notes
         id: notes
         run: |
-          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then TAG="${GITHUB_REF_NAME}"; fi
           VERSION="${TAG#v}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
