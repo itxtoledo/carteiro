@@ -112,16 +112,13 @@ jobs:
             -o "carteiro_${VERSION}_${{ matrix.target }}" ./cmd/carteiro
           tar czf "carteiro_${VERSION}_${{ matrix.target }}.tar.gz" "carteiro_${VERSION}_${{ matrix.target }}"
 
-      - name: Checksums
-        run: sha256sum carteiro_*.tar.gz > carteiro_checksums.txt
-
-      - name: Upload artifacts
+      # Each matrix job publishes its own tarball under a unique artifact name;
+      # sharing one name made the release download only one of them.
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binaries
-          path: |
-            carteiro_*.tar.gz
-            carteiro_checksums.txt
+          name: binaries-${{ matrix.target }}
+          path: carteiro_*.tar.gz
           retention-days: 1
 
   release:
@@ -137,7 +134,11 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v4
         with:
-          name: binaries
+          pattern: binaries-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: sha256sum carteiro_*.tar.gz > carteiro_checksums.txt
 
       - name: Build release notes
         id: notes
