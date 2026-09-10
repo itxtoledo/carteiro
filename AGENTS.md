@@ -35,6 +35,7 @@ internal/dkim/        DKIM signing (RSA/Ed25519 via go-msgauth)
 internal/api/         web server: admin REST API + dashboard routes (bearer),
                       openapi.json, SPA mount
 internal/sends/       persistent send history access + RFC 5322 build/parse
+internal/dnscheck/    DNS diagnostics for a sending domain (SPF/DKIM/DMARC/MX/PTR)
 internal/webui/       embedded SPA handler over web/dist (go:embed)
 internal/metrics/     atomic Prometheus counters
 web/                  React + Vite + Tailwind dashboard (src -> dist, embedded)
@@ -47,7 +48,8 @@ DNS.md                full DNS guide (SPF/DKIM/DMARC/PTR, Cloudflare notes)
 Package rules: `config` is pure config (never imports storage/smtpd);
 `smtpd` authenticates against `storage.Store`; `relay` only talks to
 `storage.Store` + MX; `sends` depends on nothing internal (stdlib only);
-`api` talks to `storage.Store` + `sends` + `webui`; `smtpd`/`relay` push
+`dnscheck` depends only on `dkim` (key parsing) + stdlib; `api` talks to
+`storage.Store` + `sends` + `dnscheck` + `webui`; `smtpd`/`relay` push
 lifecycle events into the optional `sends.Recorder`. No global mutable state
 besides the API's own metrics; the config snapshot is read once at startup
 (no SIGHUP reload; OTA changes go through the DB/API).
@@ -194,6 +196,11 @@ them.
   dashboard's Accounts screen uses the PATCH endpoint; `GET/POST /api/accounts`
   only list/create. Composed messages go through `storage.EnqueueWithID`
   with a queue id in `Message-ID`.
+- `GET /api/dns?domain=&selector=` runs the `internal/dnscheck` diagnostics
+  (SPF/DKIM/DMARC/MX/PTR) and returns per-check `pass|warn|fail|info` results
+  plus the record to publish when one is missing; it derives the expected DKIM
+  `p=` from the stored private key. It is `/api`-only (`/dns` is an SPA page),
+  and the resolver is a `Server` field so tests inject canned answers.
 - The send history is **persisted** in the `sends_log` table
   (`internal/sends.Recorder`, wired in `main` as `sends.New(store,
   512<<10)`): `smtpd` records on enqueue (Add BEFORE the DB insert, `Drop`

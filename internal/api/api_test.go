@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -8,12 +9,15 @@ import (
 	"encoding/pem"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"carteiro/internal/config"
+	"carteiro/internal/dkim"
+	"carteiro/internal/dnscheck"
 	"carteiro/internal/metrics"
 	"carteiro/internal/sends"
 	"carteiro/internal/storage"
@@ -34,7 +38,7 @@ func newTestAPI(t *testing.T) *httptest.Server {
 	store := openTestStore(t)
 	cfg := &config.API{Listen: "127.0.0.1:9090", Token: "super-secret-token"}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New(cfg, store, logger, &metrics.Metrics{}, nil, "test", 0, 0)
+	srv := New(cfg, store, logger, &metrics.Metrics{}, nil, "test", "smtp.example.com", 0, 0)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -294,7 +298,7 @@ func TestComposeSendFlow(t *testing.T) {
 	rec := sends.New(store, 1<<20)
 	cfg := &config.API{Listen: "127.0.0.1:9090", Token: "tok"}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New(cfg, store, logger, &metrics.Metrics{}, rec, "test", 0, 0)
+	srv := New(cfg, store, logger, &metrics.Metrics{}, rec, "test", "smtp.example.com", 0, 0)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	tok := "tok"
@@ -376,7 +380,7 @@ func TestUpdateAccountOverAPI(t *testing.T) {
 	}
 	cfg := &config.API{Listen: "127.0.0.1:9090", Token: "tok"}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New(cfg, store, logger, &metrics.Metrics{}, nil, "test", 0, 0)
+	srv := New(cfg, store, logger, &metrics.Metrics{}, nil, "test", "smtp.example.com", 0, 0)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	tok := "tok"
@@ -428,5 +432,85 @@ func TestUpdateAccountOverAPI(t *testing.T) {
 	}
 	if r := do(t, "PATCH", ts.URL+"/api/accounts/team@example.com", tok, `{}`); r.StatusCode != http.StatusBadRequest {
 		t.Errorf("empty patch: status = %d, want 400", r.StatusCode)
+	}
+}
+
+// fakeDNS serves canned DNS answers for the /api/dns endpoint test.
+type fakeDNS struct {
+	txt  map[string][]string
+	host map[string][]string
+	addr map[string][]string
+}
+
+func (f fakeDNS) LookupTXT(_ context.Context, name string) ([]string, error) {
+	return f.txt[name], nil
+}
+func (f fakeDNS) LookupMX(_ context.Context, name string) ([]*net.MX, error) { return nil, nil }
+func (f fakeDNS) LookupHost(_ context.Context, host string) ([]string, error) {
+	return f.host[host], nil
+}
+func (f fakeDNS) LookupAddr(_ context.Context, addr string) ([]string, error) {
+	return f.addr[addr], nil
+}
+
+func TestDNSCheckEndpoint(t *testing.T) {
+	store := openTestStore(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.API{Listen: "127.0.0.1:9090", Token: "super-secret-token"}
+	srv := New(cfg, store, logger, &metrics.Metrics{}, nil, "test", "smtp.example.com", 0, 0)
+
+	// Store a DKIM key and publish the matching public record, so the check
+	// exercises the DB -> expected-record -> DNS comparison path.
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemText := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	pub, err := dkim.PublicRecord(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertDKIM([]storage.DKIMKey{
+		{Domain: "example.com", Selector: "mail", KeyData: string(pemText)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.dns = fakeDNS{
+		txt: map[string][]string{
+			"example.com":                 {"v=spf1 ip4:203.0.113.10 -all"},
+			"mail._domainkey.example.com": {pub},
+			"_dmarc.example.com":          {"v=DMARC1; p=reject"},
+		},
+		host: map[string][]string{"smtp.example.com": {"203.0.113.10"}},
+		addr: map[string][]string{"203.0.113.10": {"smtp.example.com."}},
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	tok := "super-secret-token"
+
+	if r := do(t, "GET", ts.URL+"/api/dns?domain=example.com", "", ""); r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("dns without token: status = %d, want 401", r.StatusCode)
+	}
+	if r := do(t, "GET", ts.URL+"/api/dns", tok, ""); r.StatusCode != http.StatusBadRequest {
+		t.Errorf("dns without domain: status = %d, want 400", r.StatusCode)
+	}
+
+	resp := do(t, "GET", ts.URL+"/api/dns?domain=example.com", tok, "")
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("dns status = %d, body = %s", resp.StatusCode, raw)
+	}
+	var rep dnscheck.Report
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		t.Fatalf("invalid report JSON: %v", err)
+	}
+	if !rep.OK || rep.Failed != 0 {
+		t.Errorf("report not OK: %+v", rep)
+	}
+	if rep.Selector != "mail" {
+		t.Errorf("selector = %q, want the one stored for the domain", rep.Selector)
 	}
 }

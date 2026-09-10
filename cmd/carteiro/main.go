@@ -113,7 +113,7 @@ func run() error {
 	var apiServer *api.Server
 	var panel *api.Panel
 	if cfg.API != nil {
-		apiServer = api.New(cfg.API, store, logger, counters, rec, version, cfg.MaxMessageSize, cfg.MaxRecipients)
+		apiServer = api.New(cfg.API, store, logger, counters, rec, version, cfg.Hostname, cfg.MaxMessageSize, cfg.MaxRecipients)
 		go func() {
 			if err := apiServer.Serve(); err != nil {
 				serveErr <- fmt.Errorf("admin api: %w", err)

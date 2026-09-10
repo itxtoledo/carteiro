@@ -15,7 +15,7 @@ func TestPanelServesSPAAndProxiesAPI(t *testing.T) {
 	store := openTestStore(t)
 	cfg := &config.API{Listen: "127.0.0.1:9090", Token: "super-secret-token"}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New(cfg, store, logger, &metrics.Metrics{}, nil, "test", 0, 0)
+	srv := New(cfg, store, logger, &metrics.Metrics{}, nil, "test", "smtp.example.com", 0, 0)
 	apiTs := httptest.NewServer(srv.Handler())
 	t.Cleanup(apiTs.Close)
 
@@ -26,7 +26,7 @@ func TestPanelServesSPAAndProxiesAPI(t *testing.T) {
 	tok := "super-secret-token"
 
 	// The panel serves the SPA shell at "/" and on every React route.
-	for _, page := range []string{"/", "/sends", "/accounts", "/compose"} {
+	for _, page := range []string{"/", "/sends", "/accounts", "/compose", "/dns"} {
 		r := do(t, "GET", panelTs.URL+page, "", "")
 		if r.StatusCode != 200 {
 			t.Fatalf("panel GET %s status = %d, want 200", page, r.StatusCode)

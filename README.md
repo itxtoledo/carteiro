@@ -241,8 +241,9 @@ console style, dark/light) that is compiled and **embedded into the binary**
 the API below using the same bearer token. Pages: **Dashboard** (counters,
 queue gauges, recent activity), **Compose** (send an e-mail straight into the
 queue), **Sends** (history with rendered HTML/text previews and live delivery
-status) and **Accounts** (add/remove SMTP users). The SPA is served at `/`;
-open `http://<host>:8080/` and log in with the API token.
+status), **Accounts** (add/remove SMTP users) and **DNS check** (audit the
+sender domain's SPF/DKIM/DMARC/MX/PTR records and spot spam risks). The SPA is
+served at `/`; open `http://<host>:8080/` and log in with the API token.
 
 The screenshots below use fictional data. Login uses the API token
 configured on the server.
@@ -286,6 +287,7 @@ configured. Every call except `/health` and `/metrics` needs
 | `GET /api/sends?limit=N` | recent sends (persistent history): subject, status, attempts |
 | `GET /api/sends/{id}` | one send with rendered `html`/`text` + raw source |
 | `POST /api/send` | compose and queue `{"from","to":[],"subject","text","html"}` → 201 |
+| `GET /api/dns?domain=X&selector=Y` | DNS diagnostic for a sending domain (SPF, DKIM, DMARC, MX, PTR); compares the published DKIM `p=` with the stored key |
 | `GET /api/openapi.json` | OpenAPI 3 document (no auth) — point Swagger UI at it |
 
 > The canonical paths are under `/api`. The pre-dashboard routes `/health`,
@@ -790,6 +792,11 @@ outbound IP. The steps below use `yourdomain.com` as the sending domain and
 assume the Carteiro server has a fixed public IP `203.0.113.10` (replace
 with yours).
 
+> **Built-in check**: the dashboard's **DNS check** page (or
+> `GET /api/dns?domain=yourdomain.com`) runs all the lookups below — SPF,
+> DKIM, DMARC, MX and PTR — and tells you exactly which record is missing or
+> wrong, comparing the published DKIM key with the one stored in Carteiro.
+
 **Where each record goes — read this before the steps.** The records are
 split across the *sending domain*, the *server-hostname domain* and the *IP
 owner*. The first two may be the **same domain or two completely different
@@ -923,6 +930,7 @@ Carteiro hostname if that same box really receives mail for it).
 - [ ] DKIM generated, published and active (seed or API; check the boot log)
 - [ ] DMARC published (start with `p=none`)
 - [ ] PTR/reverse DNS matching the `hostname:` config value
+- [ ] Run the dashboard **DNS check** for the sending domain: no failures or warnings
 - [ ] Send a test to <https://www.mail-tester.com> and fix whatever it flags
 - [ ] Send to Gmail/Outlook and confirm it lands in the inbox
 - [ ] Mind volume: **warm up** a new IP (few emails at first)
@@ -1016,6 +1024,7 @@ internal/relay/       MX delivery (retry/backoff, dead-letter)
 internal/dkim/        DKIM signing (RSA/Ed25519)
 internal/api/         admin REST API + dashboard endpoints (bearer)
 internal/sends/       recent-sends ring + message parse/build (panel feed)
+internal/dnscheck/    DNS diagnostics for a sending domain (SPF/DKIM/DMARC/MX/PTR)
 internal/webui/       embedded SPA handler (web/dist via go:embed)
 internal/metrics/     Prometheus counters
 web/                  React + Vite + Tailwind dashboard (src -> dist)

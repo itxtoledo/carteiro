@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -59,6 +60,25 @@ func ParseSigner(raw []byte) (crypto.Signer, error) {
 		return nil, fmt.Errorf("EC keys are not standard DKIM; use RSA or Ed25519")
 	default:
 		return nil, fmt.Errorf("unsupported PEM block type %q", block.Type)
+	}
+}
+
+// PublicRecord returns the RDATA of the DNS TXT record that publishes the
+// signer's public key, i.e. "v=DKIM1; k=rsa; p=<base64>" (or k=ed25519).
+// RSA keys are encoded as SubjectPublicKeyInfo DER and Ed25519 as the raw
+// 32-byte key, matching what verifiers expect (RFC 6376 / RFC 8463).
+func PublicRecord(signer crypto.Signer) (string, error) {
+	switch pub := signer.Public().(type) {
+	case *rsa.PublicKey:
+		der, err := x509.MarshalPKIXPublicKey(pub)
+		if err != nil {
+			return "", fmt.Errorf("encoding RSA public key: %w", err)
+		}
+		return "v=DKIM1; k=rsa; p=" + base64.StdEncoding.EncodeToString(der), nil
+	case ed25519.PublicKey:
+		return "v=DKIM1; k=ed25519; p=" + base64.StdEncoding.EncodeToString(pub), nil
+	default:
+		return "", fmt.Errorf("unsupported public key type %T", signer.Public())
 	}
 }
 

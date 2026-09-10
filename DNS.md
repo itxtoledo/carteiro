@@ -369,6 +369,11 @@ Many Carteiro users run DNS on Cloudflare. Three things to know:
 
 ## 8. Verification commands
 
+The dashboard has a **DNS check** page (and `GET /api/dns?domain=example.com`)
+that runs these lookups for you: it reports SPF, DKIM (comparing the published
+`p=` with the key stored in Carteiro), DMARC, MX and reverse DNS in one place,
+showing the exact record to publish when something is missing or wrong.
+
 ```bash
 # SPF: one v=spf1 record on the sender domain
 dig +short TXT example.com
@@ -427,6 +432,7 @@ Before sending real volume:
 - [ ] DKIM key seeded in Carteiro and public `p=` published at
       `<selector>._domainkey.<sender-domain>`
 - [ ] DMARC published on the sender domain (`p=none` first)
+- [ ] Dashboard **DNS check** for the sender domain: no failures or warnings
 - [ ] Test with mail-tester.com and a real Gmail/Outlook address
 - [ ] **Warm up** a new IP: a handful of messages per day at first, growing
       slowly
