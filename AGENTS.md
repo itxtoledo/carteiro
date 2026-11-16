@@ -223,7 +223,7 @@ them.
 
 ## Docker, containers and releases
 
-- `Dockerfile`: `node:22-alpine` UI stage (`npm ci && npm run build`), then
+- `Dockerfile`: `node:22-alpine` UI stage (`pnpm install --frozen-lockfile && pnpm run build`), then
   static binary (CGO_ENABLED=0) on `golang:1.26-alpine` copying
   `web/fs.go` + the UI `dist` before compiling, `alpine:3.20` runtime with
   ca-certificates/tzdata/busybox-extras (for the `nc` healthcheck), runs

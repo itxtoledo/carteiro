@@ -6,10 +6,10 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 .PHONY: web web-dev build run test vet fmt clean install
 
 web:
-	cd web && npm ci && npm run build
+	cd web && pnpm install --frozen-lockfile && pnpm run build
 
 web-dev:
-	cd web && npm run dev
+	cd web && pnpm run dev
 
 build: web
 	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BINARY) ./cmd/carteiro
