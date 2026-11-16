@@ -11,10 +11,10 @@
 # architecture-independent, so this stage runs on the builder platform.
 FROM --platform=$BUILDPLATFORM node:22-alpine AS ui
 WORKDIR /ui
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
 COPY web/ ./
-RUN npm run build
+RUN pnpm run build
 
 # Build stage: static binary (CGO disabled) so it runs on any architecture
 # (amd64/arm64) with no runtime dependencies. web/fs.go embeds web/dist, which

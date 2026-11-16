@@ -975,7 +975,7 @@ docker run -d -p 587:587   -e CARTEIRO_ACCOUNTS='sender@yourdomain.com:password'
 ### Building (production: one binary, no Node)
 
 ```bash
-make web         # cd web && npm ci && npm run build  -> web/dist
+make web         # cd web && pnpm install --frozen-lockfile && pnpm run build  -> web/dist
 make build       # builds web (if needed) then bin/carteiro with the UI embedded
 make test        # go test ./...
 make vet         # go vet ./...
